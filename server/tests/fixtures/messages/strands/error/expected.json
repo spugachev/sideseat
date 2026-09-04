@@ -108,10 +108,11 @@
   },
   "trace_views": {
     "trace-1": {
-      "message_count": 2,
+      "message_count": 3,
       "role_sequence": [
         "system",
-        "user"
+        "user",
+        "assistant"
       ],
       "tool_names": [],
       "tool_definition_count": 0,
@@ -131,16 +132,26 @@
           "content": "What is 2 + 2?",
           "content_digest": "63ddd3c6a93ba932",
           "observation_type": "agent"
+        },
+        {
+          "index": 2,
+          "role": "assistant",
+          "entry_type": "text",
+          "content": "botocore.errorfactory.ValidationException: An error occurred (ValidationException) when calling the ConverseStream operation: The provided model identifier is invalid. ``` Traceback (most recent call last): File \"/Users/pugachev/Desktop/dev…[3407 chars]",
+          "content_digest": "5a17f3de8f08c932",
+          "finish_reason": "Error",
+          "observation_type": "generation"
         }
       ]
     }
   },
   "session_views": {
     "strands-error-8e727ee3": {
-      "message_count": 2,
+      "message_count": 3,
       "role_sequence": [
         "system",
-        "user"
+        "user",
+        "assistant"
       ],
       "tool_names": [],
       "tool_definition_count": 0,
@@ -160,13 +171,23 @@
           "content": "What is 2 + 2?",
           "content_digest": "63ddd3c6a93ba932",
           "observation_type": "agent"
+        },
+        {
+          "index": 2,
+          "role": "assistant",
+          "entry_type": "text",
+          "content": "botocore.errorfactory.ValidationException: An error occurred (ValidationException) when calling the ConverseStream operation: The provided model identifier is invalid. ``` Traceback (most recent call last): File \"/Users/pugachev/Desktop/dev…[3407 chars]",
+          "content_digest": "5a17f3de8f08c932",
+          "finish_reason": "Error",
+          "observation_type": "generation"
         }
       ]
     }
   },
   "feed_view": {
-    "message_count": 2,
+    "message_count": 3,
     "role_sequence": [
+      "assistant",
       "user",
       "system"
     ],
@@ -175,6 +196,15 @@
     "messages": [
       {
         "index": 0,
+        "role": "assistant",
+        "entry_type": "text",
+        "content": "botocore.errorfactory.ValidationException: An error occurred (ValidationException) when calling the ConverseStream operation: The provided model identifier is invalid. ``` Traceback (most recent call last): File \"/Users/pugachev/Desktop/dev…[3407 chars]",
+        "content_digest": "5a17f3de8f08c932",
+        "finish_reason": "Error",
+        "observation_type": "generation"
+      },
+      {
+        "index": 1,
         "role": "user",
         "entry_type": "text",
         "content": "What is 2 + 2?",
@@ -182,7 +212,7 @@
         "observation_type": "agent"
       },
       {
-        "index": 1,
+        "index": 2,
         "role": "system",
         "entry_type": "text",
         "content": "You are a helpful assistant.",

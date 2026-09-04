@@ -421,24 +421,28 @@ the trace view holds `system, assistant, assistant, tool` and the feed holds
 app…"* — survives in one span view and nowhere else. A user opening that trace sees a plan and no
 request.
 
-The mechanism is history classification, and it is the same defect class as the rest of this document:
-**phase 1 marks a message history because its timestamp precedes the span's start**, which is true of
-*every input a span received*. That evidence cannot on its own separate "a previous turn re-sent as
-context" from "the question this span was asked". What saves the other frameworks is **redundancy** — the
-agent or root span carries the question too, as non-history, so the history copy has a survivor to
-collapse onto. Strands' swarm does not put the question on its agent span, so the only copy is the
-history-classified one, and the history-only filter drops it.
+The mechanism, measured rather than assumed — and my first reading of it was **wrong**, which is worth
+recording because the wrong reading was plausible. It is *not* the timestamp phase: the user event sits
+46,416 ns **after** its chat span's start, so that test is false. Two other phases do it, and both copies
+of the question are caught:
 
-That filter is deliberate and mostly right (it is what removes previous turns' content). What is wrong is
-treating "earlier than the span" as sufficient evidence on its own. The narrowest correct statement: a
-message classified as history **solely** by the timestamp phase, whose content appears nowhere else in
-the trace, is the span's input rather than a previous turn — and dropping it removes the only record of a
-turn that demonstrably happened.
+| Copy | Marked by |
+| --- | --- |
+| on the `chat` generation span | the blanket **child-generation** rule — all unprotected content in a non-root generation span |
+| on `invoke_agent Planner` | the **accumulator** rule — an input event on a non-root accumulator span |
 
-Not fixed here, deliberately: history classification is the most ripple-prone area in the pipeline, three
-of the four measured ripples in this document came from touching adjacent machinery, and this repair needs
-its own measurement pass. It is recorded as a **named, reproducible defect with a fixture**, which is the
-standard this document holds everything else to.
+With both copies history and no non-history equivalent anywhere, the history-only filter drops the class
+entirely. The filter is right in general — it is what removes previous turns — and what is wrong is that
+the two rules together can cover *every* copy of a turn that demonstrably happened.
+
+The narrowest fix keeps exactly one witness: in the child-generation rule, preserve a single user-input
+witness when its timestamp is at or after its generation span's start **and** no non-history equivalent
+exists in the trace. Every other child copy stays history, the timestamp rule is untouched, and no
+previous turn can be resurrected — a genuine re-send predates the span it was sent to.
+
+Not fixed here, deliberately: history classification is where three of the four measured ripples came
+from, so this needs its own measurement pass with the stated acceptance condition — **the corpus delta
+must be exactly `strands-js/swarm`**, and any second fixture is a ripple rather than a repair.
 
 ## The principle
 

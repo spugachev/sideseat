@@ -809,10 +809,18 @@ const PAIRING_EXEMPT: &[(&str, &str)] = &[
 /// what it replied. CrewAI's answers were dropped for months because no invariant said so - its
 /// reasoning fixture recorded `system -> user -> user -> user`, three questions and no answers, and
 /// the goldens blessed it as correct.
-const NO_ANSWER_EXPECTED: &[(&str, &str)] = &[(
-    "strands/error",
-    "the sample exists to fail, so the run never produced an answer",
-)];
+/// Empty, and that is the point: the one entry it held is gone because the defect behind it was fixed.
+///
+/// `strands/error` was exempted on the grounds that "the sample exists to fail, so the run never
+/// produced an answer". The run *did* produce an answer - a `ValidationException` - and three span views
+/// displayed it while the trace view showed `system, user` and nothing else, because a parent error span
+/// deferred to a child that had ERROR status and no exception fields to render. The exemption was
+/// describing a defect rather than a property of the telemetry, which is exactly what an exemption must
+/// never do: the rule is that a legitimate one proves the invariant's antecedent is false in the source.
+///
+/// Kept as an empty list rather than deleted, because the next fixture that genuinely cannot answer -
+/// a cancelled run, a hard transport failure - needs somewhere to be declared with its reason.
+const NO_ANSWER_EXPECTED: &[(&str, &str)] = &[];
 
 /// A conversation that asked something must show an answer.
 ///
@@ -823,8 +831,14 @@ const NO_ANSWER_EXPECTED: &[(&str, &str)] = &[(
 /// `ordered` asks the stronger question - that the *last* turn was answered - and is false only for
 /// the project feed, whose order is descending across responses and ascending within one, so no
 /// position in it is the last turn.
-fn assert_has_an_answer(label: &str, view_name: &str, rows: &[InvariantRow], ordered: bool) {
-    if let Some((_, reason)) = NO_ANSWER_EXPECTED.iter().find(|(l, _)| *l == label) {
+fn assert_has_an_answer(
+    label: &str,
+    view_name: &str,
+    rows: &[InvariantRow],
+    ordered: bool,
+    exempt: &[(&str, &str)],
+) {
+    if let Some((_, reason)) = exempt.iter().find(|(l, _)| *l == label) {
         eprintln!("message_goldens: {label}: answer check skipped - {reason}");
         return;
     }
@@ -1198,7 +1212,7 @@ fn check_invariants(label: &str, built: &Built) {
             // framework's answers going missing, is that a feed showing a question shows something
             // that answered one.
             let ordered = !matches!(scope, Scope::Feed);
-            assert_has_an_answer(label, name, rows, ordered);
+            assert_has_an_answer(label, name, rows, ordered, NO_ANSWER_EXPECTED);
         }
     }
 
@@ -1636,7 +1650,7 @@ fn invariant_checks_are_not_vacuous() {
     // it must fire on are all well-formed.
     let unanswered = vec![row("trace-a", 0, "user", "text", "the question")];
     assert!(
-        fires(&|| assert_has_an_answer("test", "synthetic", &unanswered, true)),
+        fires(&|| assert_has_an_answer("test", "synthetic", &unanswered, true, &[])),
         "a question with no reply at all must be reported"
     );
 
@@ -1648,7 +1662,7 @@ fn invariant_checks_are_not_vacuous() {
         row("trace-a", 2, "user", "text", "second question"),
     ];
     assert!(
-        fires(&|| assert_has_an_answer("test", "synthetic", &last_turn_dropped, true)),
+        fires(&|| assert_has_an_answer("test", "synthetic", &last_turn_dropped, true, &[])),
         "an unanswered final turn must be reported even when an earlier turn was answered"
     );
 
@@ -1659,7 +1673,7 @@ fn invariant_checks_are_not_vacuous() {
         row("trace-a", 3, "assistant", "text", "second answer"),
     ];
     assert!(
-        !fires(&|| assert_has_an_answer("test", "synthetic", &answered, true)),
+        !fires(&|| assert_has_an_answer("test", "synthetic", &answered, true, &[])),
         "a complete conversation must pass"
     );
 
@@ -1670,27 +1684,36 @@ fn invariant_checks_are_not_vacuous() {
         row("trace-a", 1, "tool", "tool_result", "the result"),
     ];
     assert!(
-        !fires(&|| assert_has_an_answer("test", "synthetic", &answered_by_tool, true)),
+        !fires(&|| assert_has_an_answer("test", "synthetic", &answered_by_tool, true, &[])),
         "a tool result is an answer"
     );
 
     // Nothing was asked, so nothing is owed - a tool span's view holds no user message.
     let no_question = vec![row("trace-a", 0, "assistant", "tool_use", "call")];
     assert!(
-        !fires(&|| assert_has_an_answer("test", "synthetic", &no_question, true)),
+        !fires(&|| assert_has_an_answer("test", "synthetic", &no_question, true, &[])),
         "a view with no question must not be required to hold an answer"
     );
 
-    // The exemption is by label, and must actually exempt - otherwise strands/error fails.
+    // The exemption mechanism still has to work, and it is tested with its *own* list rather than a
+    // production entry: `NO_ANSWER_EXPECTED` is empty now that the defect behind its only entry is
+    // fixed, and putting a placeholder there to keep a test alive would be a false statement in
+    // production code about a fixture.
     assert!(
-        !fires(&|| assert_has_an_answer("strands/error", "synthetic", &unanswered, true)),
+        !fires(&|| assert_has_an_answer(
+            "some/fixture",
+            "synthetic",
+            &unanswered,
+            true,
+            &[("some/fixture", "declared unanswerable in the source")]
+        )),
         "an exempt fixture must skip the check"
     );
 
     // The feed's weaker branch: it cannot ask about the last turn, but it must still fire when a
     // question has no answer anywhere - the shape of a whole framework's replies going missing.
     assert!(
-        fires(&|| assert_has_an_answer("test", "synthetic", &unanswered, false)),
+        fires(&|| assert_has_an_answer("test", "synthetic", &unanswered, false, &[])),
         "the unordered form must still report a question with no answer at all"
     );
     // And it must accept what it cannot judge: an answer before its question is ordinary in a feed,
@@ -1700,11 +1723,11 @@ fn invariant_checks_are_not_vacuous() {
         row("trace-a", 1, "user", "text", "second question"),
     ];
     assert!(
-        !fires(&|| assert_has_an_answer("test", "synthetic", &newest_first, false)),
+        !fires(&|| assert_has_an_answer("test", "synthetic", &newest_first, false, &[])),
         "the unordered form must not require the answer to follow the question"
     );
     assert!(
-        fires(&|| assert_has_an_answer("test", "synthetic", &newest_first, true)),
+        fires(&|| assert_has_an_answer("test", "synthetic", &newest_first, true, &[])),
         "and the ordered form must still reject that same list, or the two forms are the same check"
     );
 }

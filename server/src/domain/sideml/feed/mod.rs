@@ -1625,9 +1625,26 @@ fn compose_error_text(
 /// Leaf detection is scoped by trace_id to prevent cross-trace collisions
 /// when process_feed groups multiple traces into one session.
 fn append_error_messages(messages: &mut Vec<ParsedMessage>, rows: &[MessageSpanRow]) {
+    // A child suppresses its parent only when the child can actually *say* what went wrong.
+    //
+    // Testing `status == ERROR` alone deferred to a child that had nothing to render, and then rendered
+    // nothing: in `strands/error` the innermost span is a failed `chat` carrying ERROR status and no
+    // exception fields, so it silenced its parent and contributed no message, and the same applied one
+    // level further up. The trace of a failed run showed `system, user` and **no error at all**, while
+    // three separate span views each displayed the `ValidationException`. Deferring to a child is only
+    // sound if the child will report.
     let spans_with_error_children: HashSet<(&str, &str)> = rows
         .iter()
-        .filter(|r| r.status_code.as_deref() == Some(status::ERROR) && r.parent_span_id.is_some())
+        .filter(|r| {
+            r.status_code.as_deref() == Some(status::ERROR)
+                && r.parent_span_id.is_some()
+                && compose_error_text(
+                    r.exception_type.as_deref(),
+                    r.exception_message.as_deref(),
+                    r.exception_stacktrace.as_deref(),
+                )
+                .is_some()
+        })
         .filter_map(|r| {
             r.parent_span_id
                 .as_deref()
