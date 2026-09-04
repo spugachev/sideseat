@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 7. Revision log at the end.
+**Status**: design, under review. Revision 8. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -93,6 +93,74 @@ Two other real defects came out of the same session:
 - CrewAI's use of `input.value` for its whole agent configuration is why the *question* side keeps the
   stricter rule. Configuration is not a turn, and it is the same attribute that makes one CrewAI
   fixture gitignored for holding credentials.
+
+## Cross-framework agreement is a falsifiability source, and it works
+
+Review 7's conclusion was that the central distinction is only falsifiable against hand-annotated
+ground truth. There is one source of ground truth the corpus already contains and nothing was using:
+**the same sample program, run through different SDKs.** Eleven suites have a `tool_use` sample, and
+the logical conversation is the same in each, so disagreement between them is evidence without an
+annotation.
+
+Measured, as a role/kind shape (`S`=system, `U`=user, `A`=assistant, `T`=tool, `*`=tool_use,
+`r`=tool_result):
+
+| Shape | Suites |
+| --- | --- |
+| `S U A* A* Tr Tr A` | adk, crewai, strands-js, vercel-ai-js — **four agreeing exactly** |
+| `S U A* Tr A A U A* Tr A U A* Tr A` | agent-framework, openai-agents — two agreeing exactly |
+| `U S A* Tr A …` (16 messages) | claude-agent-sdk and claude-agent-sdk-js — **Python/JS parity, exact** |
+| `S U A A* A* Tr Tr A` | strands — the extra leading `A` is its genuine preamble text |
+| `U S A* A* Tr Tr A` | langgraph |
+
+The agreement is real and worth stating: four independent SDKs produce a byte-identical shape, and the
+two Claude Agent SDKs agree across languages. That is a much stronger consistency claim than "the
+goldens did not change".
+
+**And the disagreement found a defect immediately.** Two suites place the **system instruction after
+the user's question**. The cause is visible in the observation types:
+
+| Suite | user message from | system instruction from |
+| --- | --- | --- |
+| langgraph | a `chain` span | the `generation` span |
+| claude-agent-sdk | a plain `span` | the `generation` span |
+| strands (correct) | its `agent` span | the same `agent` span |
+
+So the system prompt is ordered *by when its evidence arrived*, and its evidence arrives on the
+generation span — later than the question, which the orchestration span carried. Where both come from
+one span, document order holds and the result is right.
+
+That is a real presentation defect: a system instruction is not a turn that happened after the
+question, it is the **frame the request was made in**.
+
+**Attempting it as a scalar adjustment failed, and the failure is precise.** The obvious repair follows
+the `after_call` precedent: give a lone system block the earliest response time in its trace, before
+sorting, as a property of the block rather than of a compared pair. Measured:
+
+| | Result |
+| --- | --- |
+| first form (move every system block) | `assert_carrier_subsequence` fired on `adk/image_gen` — ADK's `gcp.vertex.agent.llm_request` lists the whole request in *one* carrier, so the instruction is already first within it and moving that block out of its carrier group reversed the snapshot's own positions 0 and 2 |
+| refined (skip a block sharing a carrier with non-system messages) | **15 feed views changed and not one trace view was repaired** |
+
+The second row is the interesting one. Equalising `batch_time` only makes the instruction *tie* with
+the question; the next term in the key is the span, and the orchestration span sorts before the
+generation span — so `user, system` survives unchanged, while merging the block into the first response
+run reorders the feed, which reverses runs as wholes. A scalar cannot express "before" without
+inventing a time that is not a response's time, which would re-entangle the display timestamp that
+`order_time` was split out to protect.
+
+So this needs a **hard edge, not a key term**: `system → the other inputs of its request`, resolved in
+`order_graph` where "before" is a constraint rather than a position. It is the first case in this
+document where the constraint form is not merely tidier but *necessary*, and it is an input-framing
+constraint rather than a causal one — a class the resolver does not yet have.
+
+Reverted. Four measured attempts now, and this is the only one whose diagnosis names the mechanism that
+would work.
+
+Two things this establishes for the design. Cross-SDK agreement belongs in the verification apparatus
+as a first-class check, not as an observation. And the ordering layer needs constraints for input
+*framing*, not only for causality — which is an argument for the constraint graph that neither the
+ripple table nor the invariant audit had produced.
 
 ## The principle
 
@@ -756,6 +824,138 @@ attribution*, and it does not, on its own, replace "the goldens change and a hum
 as the guarantee for the one distinction everything rests on. Anything stronger requires per-occurrence
 ground truth that is added deliberately, fixture by fixture.
 
+## The verification apparatus, specified
+
+Review 7 said what was missing; this is what to write. The governing decision: **do not extend the
+current row fuzzer.** `feed/props.rs` generates isolated persisted rows holding one message, with no
+hierarchy, bundles, copies or branch structure — it cannot reach a single shape this model needs.
+
+### A scenario generator that carries its own ground truth
+
+The direction of derivation is what makes it non-circular:
+
+```text
+SourceProgram ──→ TruthGraph          (the oracle; never given to the implementation)
+       └───────→ producer encoder ──→ ExportTraceServiceRequest   (the real input)
+```
+
+Never generate OTLP and infer truth from it. The program's own actions are the truth:
+
+```rust
+program.emit_new(...)                              // a new TruthOccurrenceId
+program.redeliver(witness)                         // same witness, same id
+program.restate(targets)                           // no new id
+program.retry(...)                                 // a new id
+program.alias(a, b, StableOccurrenceIdentity)      // one id, two witnesses
+```
+
+Shapes it must reach: carrier bundles with several physical members; several observations at distinct
+positions including byte-identical content; exact re-delivery of one locator; fresh locators with
+identical content; parent snapshots with changed encoding and regenerated ids; cross-trace replay;
+parallel branches with identical outputs; retries as distinct attempts; an ambiguous restatement
+compatible with two identical creations; complementary and conflicting renderings; cancelled and error
+turns; and the mixed-authority carrier.
+
+What it must **not** generate, because each would manufacture a false failure: bundles inferred from a
+shared name prefix (membership comes from the producer encoder); private carriers on span types that
+producer never emits; claim combinations the sum type forbids; one witness locator with two payloads
+(that is replacement, not re-delivery); stable occurrence authority on a regenerated id; *global*
+replay injectivity; arbitrary topological interleavings of parallel branches (only producer-valid
+serialisations); a successful completion with no answer; a cancelled turn that also carries a success
+marker.
+
+**Shrink the `SourceProgram` and re-render it — never shrink raw OTLP.** Each case carries a contract
+naming the shape to preserve, the witness pairs that must stay distinct, and the identity edges that
+must survive, so a shrink cannot turn "fresh witness" into "exact re-delivery" and call the property
+satisfied.
+
+### The contraction test, and what is buildable today
+
+The assertion is over **occurrence equivalence classes**, not rendered message counts:
+`creation_partition(&assembly) -> BTreeSet<BTreeSet<CreateWitness>>`.
+
+| Case | Expected partition | Buildable now? |
+| --- | --- | --- |
+| exact re-delivery of one locator | one class, one witness | **yes** — the corpus test already doubles rows |
+| two locators, identical content, no identity evidence | two singletons | **yes** for atomic-emission carriers |
+| parallel branches, identical content | two singletons | input constructible, but rendered count cannot distinguish "contracted" from "a witness was dropped" — weak until evidence accounting exists |
+| retry as two attempts | two occurrences, each result attached to its own call | **yes** as a rendered-multiplicity gate (`crewai/mcp_tools` already serves this) |
+| same stable `OccurrenceIdentity`, or a declared same-emission edge | one class, two witnesses | needs the new model — there is no `ReferenceAuthority` today, so a collapse cannot be attributed to the intended evidence |
+
+One correction to revision 7: in the last case contraction must be **required**, not merely permitted,
+or an assembler that ignores stable identity passes.
+
+### Metamorphic tests, as transformations
+
+| Invariant | Transformation | Exact | May change |
+| --- | --- | --- | --- |
+| 2 decoder locality | decode the target bundle alone, then add/remove/reorder unrelated bundles and spans | the target bundle's observations: positions, content, ids, shape tags | observations and diagnostics for the added bundles |
+| 4 representation independence | substitute a producer-declared equivalent encoding that adds no temporal or order evidence | the creation-witness partition and occurrence count | the chosen rendering and its provenance |
+| 6 restatement idempotence | add a proven parent transcript, duplicate span or replay, with changed encoding and regenerated ids | creation membership; **no** production anchor or hard edge may appear from a restatement | lineage gains witnesses; an `Ordered` restatement may refine order, an `Unordered` one may not; exact re-delivery stays byte-identical |
+| 7 replay invariance | emit a **producer-valid** serialisation of a prior `ReplayPrecedence` as a later snapshot, over several serialisations | no occurrence created for the matched prefix; matching injective *within* the bundle; several bundles may each match one prior occurrence | ordered replay may refine soft sequence; a suffix after the first unmatched item may create occurrences |
+| 8 authority separation | hold the graph fixed, force each rendering to win via a test-only override | partition, placement, anchors, edges, matches, final order | displayed content and provenance only |
+| 8a representation completeness | force every per-block alternative to win in turn | the block-occurrence id set and cohesion membership | the rendering of the selected block |
+| 10 presentation independence | reconcile once, project under neutral / production / pairwise / perturbed constraints | occurrence multiset, partition, matches, unmatched set, ambiguities, representative choice | linear order and presentation-only diagnostics |
+
+Note what this corrects: `reading_more_carriers_only_adds_messages` is **not** a test of decoder
+locality — it compares rendered output after the whole pipeline. Locality has to compare decoder output
+before claims, dedup or rendering.
+
+### Mutation controls, named per seam
+
+A property that only passes the current implementation is not a gate. Each of these must fail:
+
+| Mutation | Must fail |
+| --- | --- |
+| contract equal content | contraction cases 2-4 |
+| treat every creation as `Restates` | the claim oracle |
+| make replay injectivity global | two independent parent snapshots |
+| choose a representative per copy | invariant 8a |
+| reconcile from the presented order | invariant 10 |
+
+### Ordering: what must exist before what
+
+The dependency is blunt — **a test that cannot fail today is worthless as a gate on tomorrow's
+change.**
+
+1. the scenario generator, truth graph, producer encoders and model-aware shrinker;
+2. stage-level observables: carrier accounting, claims plus ledger, the assembly witness partition,
+   reconciliation matches and ambiguities, the projection graph;
+3. exemptions replaced by source-proven limitations;
+4. current-pipeline gates for re-delivery, identical positions and retries, each with its mutation
+   control.
+
+Then, per mechanism: profiles need decoder locality, evidence accounting, the claim oracle and
+permutation invariance **first**, or profile work recreates the unfalsifiable switch; the assembler
+needs the five-case suite plus 4 and 6 against a shadow implementation, because promoting one whose only
+observable is rendered count cannot be judged; reconciliation needs producer-valid replay generation and
+per-bundle injectivity; representative selection needs 8 and 8a with the winner override; the resolver
+comes last, with membership already frozen. Goldens are regenerated last of all.
+
+## Can the central distinction be falsified without hand annotation?
+
+For arbitrary existing id-less telemetry, **no** — and four tempting substitutes each fail for a
+different reason:
+
+| Candidate | Why it is not sufficient |
+| --- | --- |
+| a second independent implementation | agreement can mean both share the same wrong profile rule |
+| self-consistency across the four views | a consistent false contraction appears consistently in every view |
+| cross-framework agreement | identifies an outlier without establishing which framework is right — as the system-instruction case shows, the *minority* was correct there, and only reasoning about spans settled it |
+| mutation testing | proves the apparatus detects specified mistakes, not that an unannotated production claim is true |
+
+**But there is a construction that works, and it needs no hand-authored annotations**: controlled
+capture with a machine-generated manifest. Drive each SDK from a generated `SourceProgram` against
+deterministic fake models and tools, and record an out-of-band manifest mapping each application action
+and its live trace/span context to a `TruthOccurrenceId`. The harness knows whether it emitted, retried,
+re-delivered, or merely let the SDK re-send history — so the ground truth is independent of any
+interpretation of the telemetry, while the telemetry itself is real output from a real framework
+encoder.
+
+That is the strongest available answer, and it is bounded: it says nothing about historical or
+third-party telemetry. For that open-world case review 7's conclusion stands — a wrong `Restates` can be
+internally consistent and observationally indistinguishable from the truth.
+
 ### Exemptions, and the rule that keeps one honest
 
 Exemptions are how an invariant rots into a formality, and three existing ones are too broad:
@@ -766,6 +966,19 @@ The rule:
 
 > A legitimate exemption **proves that the invariant's antecedent is false in the source telemetry**. A
 > suppressed failure merely records that the implementation cannot currently satisfy it.
+
+The machinery, so the rule is enforced rather than aspired to: a typed `ExemptionSpec` carrying the
+invariant, a producer selector *including scope and version range*, the fixture, a locator pattern built
+from stable labels and canonical ordinals (never generated ids), the exact expected finding with its
+witnesses and count, a `SourcePredicate` and the diagnostic the user must see. The predicate evaluator
+reads the raw `ExportTraceServiceRequest` **before** normalisation and may not call the decoder or look
+at rendered output — otherwise a broken decoder can "prove" that the evidence it failed to read was
+absent.
+
+Two consequences worth taking: `strands/error` should stop being an exemption at all, because the answer
+invariant's antecedent is genuinely false there (no successful completion) and that predicate can be
+asserted *positively*; and `KNOWN_DEFAULTED` carriers should either be declared or retained opaquely
+with a diagnostic, rather than living in a silent allowlist.
 
 So an exemption is an *exact expected limitation*, not a skipped assertion: it names the invariant, the
 producer and version, the exact fixture/view/span/carrier locator, the expected violating witnesses and
@@ -1065,3 +1278,4 @@ reasoning is auditable rather than re-derived.
 | 5 | reliability and scale | **stage 4 as specified is factorial in the worst case** (`n!/(n-m)!` injective assignments; it bites on repeated identical content with no stable ids — the shape that made the existing cross-trace matcher need a budget). Added the whole operational contract that revisions 1-4 lacked: a matching budget mirroring `MATCH_BUDGET = 20_000` with forced unions outside the search, canonical witness-locator traversal, and exhaustion that keeps proven matches and **under-strips** rather than guessing; a batched graph merge, since per-merge recomputation is `O(M(V+E))`; the admission that input-linearity is **not knowable from this document** and needs a stage-4 benchmark before any promotion. **Statelessness restated set-wise** — "the provisional node's id is kept" described mutating state that does not persist, so an occurrence keeps every witness id as an alias with the primary chosen by locator order; and **evidence is not monotonic across reads**, because ClickHouse may have merged away the earlier version, so the merge algebra must be a pure function of the rows now present. Chose **build-time profiles**, since the reconstruction cache is keyed on rows alone and a runtime-editable profile set is exactly the stale-answer failure that key discipline exists to exclude. And **"self-scaling" is the wrong goal for this layer** — autoscaling cannot reduce one 68 MB reconstruction's latency; the six checkable properties replace it | `feed/mod.rs:353`/`:404`; `feed/cache.rs`'s row-only key and `every_field_of_a_row_reaches_the_digest`; ClickHouse's inability to express an as-of read |
 | 6 | framework independence | **the claim was not defensible and is now weakened to one that is**: framework identity is not required to decode and conservatively render *supported semconv* carriers, while producer scope and version remain correctness inputs for private dialects and for standard carriers whose occurrence semantics are locally ambiguous. "A conforming producer works automatically" is false — a producer emitting correct semconv **plus** its real answer in a private member (the CrewAI `raw` shape) leaves that answer opaque, because profiles may not read arbitrary payload. Counted the payoff instead of asserting it: 13 of 16 extractor families and ~10 attribute-recovery families are **irreducible** dialect adapters, so what the redesign removes is the **six framework-specific policy couplings**, now listed as the deliverable. Added the semconv-revision analysis — better at meaning changes, slightly *worse* at alias churn unless one canonical versioned compatibility module exists, which is not yet specified. And the ripple table gained a third row, measured in this cycle: the "obviously right" fix of letting the generic reader fill an empty side failed three ways, ending in langgraph 12 → 28 messages, because `output.value` means *answer* on a generation span and *node state* on a chain span | `attributes.rs`'s 28 recognition rules and its private usage-JSON readers; `messages.rs`'s 16 extractor families; measurement of `crewai/files`, `answer_beside_the_conversation`, `nested_state_messages` and the langgraph suite |
 | 7 | the invariant set | **the invariants are neither independent nor mostly testable, and the central one is not falsifiable.** Six pairs overlap (3↔9, 3↔12, 3↔5, 5↔12, 4↔6, 6↔7), and two entries are not invariants at all — claim conformance is an oracle requirement, profile permutation a determinism property. Nine have **no test**, five only weaker approximations, one is genuinely covered; `feed/props.rs` cannot generate a single shape the model needs. Six *kept* invariants would falsely accuse a legitimate corpus shape (retried calls, ordered restatement evidence refining order, branch interleavings no producer can serialise, unanswered calls in error turns, the feed's deliberate newest-first order, provably-distinct identical creations). Added the missing invariant — **distinct creation witnesses are never contracted** without independent identity evidence — with the five-case discrimination its test needs, and the admission that it catches a wrong *assembler* and not a wrong *profile*, for which ground truth is not constructible from telemetry that carries no occurrence marker. Restored the answer invariant the list had dropped, in the form that does not falsely accuse (`a turn with explicit completion evidence has an answer`). And a rule for exemptions: a legitimate one **proves the antecedent is false in the source**, and fails when the violation *disappears* | `feed/props.rs`'s generator; `carrier_semantics_are_declared` (blind to a dropped carrier); `reading_more_carriers_only_adds_messages` (rendered output, not decoder output); `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED`; `REORDERS_UNDER_PER_CARRIER` as the pattern to copy |
+| 8 | the verification apparatus | Constructive rather than critical: specified what to build. **Do not extend the row fuzzer** - it cannot reach one shape the model needs. A scenario generator derives *both* the oracle and the telemetry from a `SourceProgram`, so ground truth comes from the action taken rather than from any reading of the output; shrinking is over the program, under a contract that forbids a shrink from turning "fresh witness" into "re-delivery". Specified the five-case contraction test over **occurrence equivalence classes** (and corrected revision 7: contraction on stable identity must be *required*, or an assembler that ignores it passes), seven metamorphic transformations with what each may and may not change, five mutation controls named per seam, and the dependency order - a test that cannot fail today is worthless as a gate on tomorrow's change. Also: `reading_more_carriers_only_adds_messages` is **not** a decoder-locality test, since it compares rendered output. And the answer on falsifiability without annotation: no for arbitrary telemetry, but **yes** for controlled captures with a machine-generated manifest - drive each real SDK from a generated program against deterministic fake models, recording actions against live span contexts out of band | `feed/props.rs`; `REORDERS_UNDER_PER_CARRIER` as the bidirectional pattern; `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED` as the three that skip instead of proving |
