@@ -1,0 +1,241 @@
+{
+ "resourceSpans": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "undeclared-conforming-producer"
+      }
+     }
+    ]
+   },
+   "scopeSpans": [
+    {
+     "scope": {
+      "name": "some.otel.genai.instrumentation",
+      "version": "1.0.0"
+     },
+     "spans": [
+      {
+       "traceId": "cc000000000000000000000000000001",
+       "spanId": "c100000000000001",
+       "name": "invoke_agent calc-agent",
+       "kind": 1,
+       "startTimeUnixNano": "1735689600000000000",
+       "endTimeUnixNano": "1735689604000000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "invoke_agent"
+         }
+        },
+        {
+         "key": "gen_ai.agent.name",
+         "value": {
+          "stringValue": "calc-agent"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "synthetic"
+         }
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\": \"text\", \"content\": \"You are a calculator.\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"what is 2+2?\"}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_1\", \"name\": \"calculator\", \"arguments\": {\"expression\": \"2+2\"}}]}, {\"role\": \"tool\", \"parts\": [{\"type\": \"tool_call_response\", \"id\": \"call_1\", \"response\": {\"value\": 4}}]}, {\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"2+2 is 4\"}], \"finish_reason\": \"stop\"}]"
+         }
+        }
+       ],
+       "events": []
+      },
+      {
+       "traceId": "cc000000000000000000000000000001",
+       "spanId": "c100000000000002",
+       "parentSpanId": "c100000000000001",
+       "name": "chat model-x",
+       "kind": 1,
+       "startTimeUnixNano": "1735689601000000000",
+       "endTimeUnixNano": "1735689601500000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "chat"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "synthetic"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "model-x"
+         }
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\": \"text\", \"content\": \"You are a calculator.\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"what is 2+2?\"}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_1\", \"name\": \"calculator\", \"arguments\": {\"expression\": \"2+2\"}}], \"finish_reason\": \"tool_call\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "12"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "8"
+         }
+        }
+       ],
+       "events": []
+      },
+      {
+       "traceId": "cc000000000000000000000000000001",
+       "spanId": "c100000000000003",
+       "parentSpanId": "c100000000000001",
+       "name": "execute_tool calculator",
+       "kind": 1,
+       "startTimeUnixNano": "1735689601600000000",
+       "endTimeUnixNano": "1735689601800000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "execute_tool"
+         }
+        },
+        {
+         "key": "gen_ai.tool.name",
+         "value": {
+          "stringValue": "calculator"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.id",
+         "value": {
+          "stringValue": "call_1"
+         }
+        },
+        {
+         "key": "gen_ai.tool.type",
+         "value": {
+          "stringValue": "function"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.arguments",
+         "value": {
+          "stringValue": "{\"expression\": \"2+2\"}"
+         }
+        },
+        {
+         "key": "gen_ai.tool.call.result",
+         "value": {
+          "stringValue": "{\"value\": 4}"
+         }
+        }
+       ],
+       "events": []
+      },
+      {
+       "traceId": "cc000000000000000000000000000001",
+       "spanId": "c100000000000004",
+       "parentSpanId": "c100000000000001",
+       "name": "chat model-x",
+       "kind": 1,
+       "startTimeUnixNano": "1735689602000000000",
+       "endTimeUnixNano": "1735689602500000000",
+       "attributes": [
+        {
+         "key": "gen_ai.operation.name",
+         "value": {
+          "stringValue": "chat"
+         }
+        },
+        {
+         "key": "gen_ai.provider.name",
+         "value": {
+          "stringValue": "synthetic"
+         }
+        },
+        {
+         "key": "gen_ai.request.model",
+         "value": {
+          "stringValue": "model-x"
+         }
+        },
+        {
+         "key": "gen_ai.system_instructions",
+         "value": {
+          "stringValue": "[{\"type\": \"text\", \"content\": \"You are a calculator.\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.input.messages",
+         "value": {
+          "stringValue": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"what is 2+2?\"}]}, {\"role\": \"assistant\", \"parts\": [{\"type\": \"tool_call\", \"id\": \"call_1\", \"name\": \"calculator\", \"arguments\": {\"expression\": \"2+2\"}}]}, {\"role\": \"tool\", \"parts\": [{\"type\": \"tool_call_response\", \"id\": \"call_1\", \"response\": {\"value\": 4}}]}]"
+         }
+        },
+        {
+         "key": "gen_ai.output.messages",
+         "value": {
+          "stringValue": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"2+2 is 4\"}], \"finish_reason\": \"stop\"}]"
+         }
+        },
+        {
+         "key": "gen_ai.usage.input_tokens",
+         "value": {
+          "intValue": "40"
+         }
+        },
+        {
+         "key": "gen_ai.usage.output_tokens",
+         "value": {
+          "intValue": "6"
+         }
+        }
+       ],
+       "events": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

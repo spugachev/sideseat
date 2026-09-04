@@ -55,7 +55,7 @@ the corpus matches it.
 
 | Suite | Version captured against | Samples | Captured requests |
 | --- | --- | --- | --- |
-| `_synthetic` | hand-written shapes, no SDK | 12 | 12 |
+| `_synthetic` | hand-written shapes, no SDK | 13 | 13 |
 | `adk` | google-adk >=1.27.0 | 8 | 18 |
 | `agent-framework` | agent-framework-core >=1.0.0b0 | 10 | 17 |
 | `anthropic` | anthropic >=0.84.0 | 7 | 18 |
