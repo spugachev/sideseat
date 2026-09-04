@@ -3896,10 +3896,24 @@ pub(crate) fn try_raw_io(
     _: &str,
     timestamp: DateTime<Utc>,
 ) -> bool {
+    /// A value that does not parse as JSON is still a value.
+    ///
+    /// `input.value` and `output.value` are generic by design - OpenInference pairs them with
+    /// `input.mime_type`/`output.mime_type`, and `text/plain` is a documented option - so requiring
+    /// `serde_json` to accept them dropped every answer a producer sent as bare text, silently and
+    /// whatever else the span carried. `_synthetic/openinference_plain_text_answer` is that shape.
+    fn json_or_text(attrs: &HashMap<String, String>, key: &str) -> Option<JsonValue> {
+        let raw = attrs.get(key)?;
+        Some(match serde_json::from_str::<JsonValue>(raw) {
+            Ok(parsed) => parsed,
+            Err(_) => JsonValue::String(raw.clone()),
+        })
+    }
+
     // Note: system_prompt is extracted in extract_messages_for_span (mod.rs)
 
     // input.value - preserve raw JSON, wrap plain data as user message
-    if let Some(parsed) = extract_json::<JsonValue>(attrs, keys::INPUT_VALUE) {
+    if let Some(parsed) = json_or_text(attrs, keys::INPUT_VALUE) {
         let wrapped = wrap_plain_data(parsed, "user");
         messages.push(RawMessage::from_attr(keys::INPUT_VALUE, timestamp, wrapped));
     }
@@ -3913,7 +3927,7 @@ pub(crate) fn try_raw_io(
     }
 
     // output.value - preserve raw JSON, wrap plain data as assistant message
-    if let Some(parsed) = extract_json::<JsonValue>(attrs, keys::OUTPUT_VALUE) {
+    if let Some(parsed) = json_or_text(attrs, keys::OUTPUT_VALUE) {
         let wrapped = wrap_plain_data(parsed, "assistant");
         messages.push(RawMessage::from_attr(
             keys::OUTPUT_VALUE,

@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 4. Revision log at the end.
+**Status**: design, under review. Revision 6. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -15,6 +15,7 @@ The evidence is measured, not felt:
 | --- | --- | --- |
 | Text from an atomic-emission carrier uses `span_end` | 29 fixtures reordered | no |
 | Prefer a generation span's copy over an agent span's | 22 fixtures reordered | no |
+| Let the generic reader fill a side a dialect left empty | langgraph expanded 12 → 28 messages | no |
 | Six earlier ordering candidates (recorded in the plan file) | varies | no |
 
 The root cause is a category error: **the same carrier name means different things on
@@ -51,6 +52,32 @@ rest on it.
 leaving its target case untouched is a statement about the layers, not about the change: the output
 order is one global tuple whose terms come from heuristics, so every term is coupled to every shape.
 That is the fragility, and it is reproducible.
+
+The third row was measured during review 6 and is the cleanest demonstration yet, because the
+change is one a reviewer would call obviously right. `raw_io` — the reader for the framework-agnostic
+`input.value`/`output.value` pair — runs only when *no* dialect extractor produced anything
+(`messages.rs`, `!any_specific`). That is a gate on a different carrier: a span whose question arrives
+as `llm.input_messages` and whose answer sits only in `output.value` returns the question alone.
+
+Three attempts to open it, each measured:
+
+| Attempt | Result |
+| --- | --- |
+| run the generic reader unconditionally | duplicated the answer on `answer_beside_the_conversation` and `nested_state_messages` — it bypassed carrier claiming |
+| …respecting claims | `crewai/files` **lost its answer**: CrewAI serialises its whole agent configuration into `input.value`, so `{"agent":{"role":…,"goal":…}}` arrived as a user message *after* the reply. (This is the same attribute that makes one CrewAI fixture gitignored for holding credentials.) |
+| …admit only the *answer* side, gated on the declared `carrier_holds_span_output` | langgraph 12 → 28 messages: `output.value` on a `Prompt` or `should_continue` node is node state, not an answer |
+
+The third failure is the thesis restated at the smallest possible scale: **`output.value` means "the
+answer" on a generation span and "node state" on a chain span**, and extraction cannot tell them apart
+because it does not have the span's observation type where the decision is made. No gate over carrier
+*names* can be right here. Reverted; the shape is kept as a stated limitation rather than a fixture,
+because a failing test that cannot be fixed without the redesign is a permanently red build.
+
+What did survive from that session is a separate, real defect it uncovered: `extract_json` returns
+`None` for anything `serde_json` rejects, so a **plain-text** `output.value` was dropped entirely —
+and `text/plain` is a documented OpenInference mime type. Now read as text
+(`_synthetic/plain_text_generic_io`, mutation-verified). Its one corpus change is a repair: a
+`RunnableSequence` span view went from 0 messages to the prompt it actually carried.
 
 ## The principle
 
@@ -94,6 +121,33 @@ OTLP payload in hand.
 
 **Consequence for the migration order**: capturing provenance and scope is step 1, and it is useful
 on its own regardless of whether anything downstream is ever rewritten.
+
+### Profiles must not be runtime-editable
+
+The reconstruction cache is keyed on a BLAKE3 digest of the rows and nothing else (`feed/cache.rs`),
+deliberately with no version constant: a changed row is a different key, so there is no invalidation
+to get wrong. `every_field_of_a_row_reaches_the_digest` is a structural test that keeps
+`MessageSpanRow` and the digest in agreement.
+
+A **profile is configuration outside the rows**, and it changes the answer. So a runtime-editable
+profile set breaks exactly the discipline that makes the cache safe: two reads of identical rows
+would return different answers under one key. Two ways out, and only one of them is consistent with
+the rest of the system:
+
+- **profiles are build-time** — compiled in, changing only with the binary. A deploy replaces every
+  process and every cache starts empty, so the invariant holds for free. This is the choice.
+- profiles are runtime data — then every read must pin one immutable snapshot and the key becomes
+  `(rows digest, session grouping, mode, canonical profile-snapshot digest)`, covering every selector,
+  assignment and `refines` edge in canonical order, as a content digest rather than a replica-local
+  generation counter. Any runtime-adjustable **budget or semantic flag that changes the answer**
+  belongs in the same digest. That digest becomes something an operator can get wrong, and the same
+  argument that rejected a persisted cache with a hand-maintained version constant rejects it.
+
+The cost of the first is real and should be stated: onboarding a new private dialect needs a release,
+not a config push; there are no per-tenant profiles; and during a rolling deploy two replicas may
+interpret the same rows differently until it completes. Given that a dialect also needs a fixture and a
+golden review, that is the honest cost of the guarantee rather than an extra restriction — and the
+rolling-deploy window is the same one any behaviour change already has.
 
 ## Stages
 
@@ -272,7 +326,8 @@ Profiles must be partial: a semconv rule establishes direction and sequence for 
 a scope-and-version rule adds `replay_stability` for one producer. Requiring every profile to fill
 every field would force duplicated mega-profiles, which is how registries rot.
 
-**Framework identity is optional metadata, not the correctness switch.** Measured on the corpus:
+**Framework identity is not the correctness switch for standard carriers** — see "Framework
+independence, stated so it is true" for the exact claim and its limits. Measured on the corpus:
 `gen_ai.operation.name` is present on essentially every request file of adk, anthropic, bedrock,
 langgraph, openai, openai-agents, strands and agent-framework; CrewAI is the outlier (5 of 33).
 So selection keyed on operation, observation type and scope has a real basis, and a conforming
@@ -598,14 +653,179 @@ Each row was a conflation present in an earlier revision of this document:
 | evidence authority (the tier table) | how much a class of evidence proves | the order a search explores candidates |
 | credible time | ready-node priority | a causal edge |
 
-## The honest limit
+## The operational contract
 
-No system can interpret every future private dialect. If two producers emit identical OTLP
-meaning different things, the information is absent. The achievable contract:
+Revisions 1-4 were semantics with no operational content, and one of them is a real hazard: **stage 4
+as specified is factorial in the worst case.** A bundle with `m` restatements each having `n`
+compatible targets admits `n!/(n-m)!` injective assignments, and provisional branches enlarge the tree
+further. Partial-order compatibility couples the choices, so this is not edge filtering that prunes
+itself.
 
-- a conforming producer nobody has captured works automatically;
+It bites on exactly one shape: many observations sharing a fingerprint, no stable occurrence ids, and
+order constraints that disambiguate them only late — repeated `"yes"`, several tools answering `"ok"`,
+parallel or retried identical calls. That shape is not hypothetical; it is why the existing
+cross-trace matcher needed a budget at all (`feed/mod.rs:404`: nine interchangeable calls have `9!`
+orderings of one set).
+
+The pipeline is linear in its input today (~27 MB/s, measured). **The obligation is not to add a
+second, algorithmic source of superlinearity**, since the existing quadratic growth is in the
+telemetry a replaying framework emits and no amount of normaliser work touches it.
+
+### The matching budget
+
+Revision 4 said stages 4 and 5 share one bounded engine and then gave stage 4 no bound, which is a
+contradiction. The contract, mirroring the precedent already in the code
+(`MATCH_BUDGET = 20_000`, `feed/mod.rs:353`):
+
+1. forced tier-1 and tier-2 unions, and deterministic singleton matches, happen **without search**;
+2. at most 20 000 speculative candidate-assignment expansions per reconstruction;
+3. ambiguity components are processed in canonical **witness-locator** order — never hash-map or row
+   order, or two replicas disagree;
+4. on exhaustion: **keep proven matches, discard unproven weak assignments** in the unresolved
+   components, and emit those observations as provisional occurrences and explicit ambiguities. This
+   deliberately **under-strips** — the standing rule that duplicates beat deletion;
+5. deterministic non-search work continues; the answer is never refused wholesale;
+6. the caller is told: `reconciliation_complete: false`, with stage, budget, attempts and the count of
+   unresolved observations.
+
+Returning a best-so-far weak assignment is **not** an option: without proof of optimality it can merge
+a genuine repeat, which deletes content.
+
+The graph merge must be **batched** — unions collected, then the graph built once (`O((V+E) log V)`).
+Recomputing groups, SCCs and the projection per merge is `O(M(V+E))`, and the existing resolver
+already needed barriers and ordered ready sets to remove quadratic behaviour.
+
+Whether the model preserves input-linearity on the normal path is **not knowable from this document**,
+and that is a gap rather than an omission: there is no candidate-count measurement and no stage-4
+benchmark. One is required before any promotion, alongside `bench_session_scaling`.
+
+### Statelessness, stated properly
+
+Reads are **stateless recomputations from rows**, so revision 4's "the provisional node's id is kept"
+was written as an incremental mutation of something that does not persist. Two replicas would pick
+different ids. The rule has to be **set-wise**: an occurrence retains every witness id as an alias,
+and its primary id is chosen by stable witness-locator order. Then any replica, warm or cold, derives
+the same identity from the same rows.
+
+And **evidence is not monotonic across reads.** Revision 4 called the graph merge monotonic; that is
+true within one reconstruction and false between two. ClickHouse's `ReplacingMergeTree` can have
+merged away the earlier version of a re-delivered span, so a later read may see *less* evidence, and
+it cannot offer DuckDB's as-of-watermark cut. So the merge algebra must be a **pure function of the
+rows now present**, never an assumption that evidence only accumulates.
+
+What the caller sees, because none of this may be silent:
+
+```text
+provisional_occurrences     count
+ambiguous_occurrences       count
+reconciliation_complete     bool
+input_snapshot              exact_as_of | best_effort   // per analytics backend
+```
+
+### "Self-scaling" is the wrong goal for this layer
+
+Autoscaling belongs to the serving layer: it raises aggregate throughput and cannot reduce one 68 MB
+reconstruction's latency, nor rescue a factorial search. The properties actually wanted here, each
+checkable:
+
+- stateless and horizontally deployable;
+- **deterministic across replicas**, including under budget exhaustion;
+- linear in input on the normal path;
+- hard-bounded speculative search;
+- memory bounded by observations plus sparse candidate and graph edges;
+- conservative, caller-visible degradation.
+
+One consequence worth naming: scaling out multiplies *cold* caches, so horizontal scaling increases
+duplicate reconstruction work. The cache is performance state, not semantic state, so this costs
+latency and never correctness — and a warm cache and a cold one must produce byte-identical answers,
+which `a_cached_reconstruction_equals_a_fresh_one` already checks.
+
+## Framework independence, stated so it is true
+
+Earlier revisions claimed "framework identity is optional metadata, not the correctness switch" and
+"a conforming producer nobody has captured works automatically". The second is false and the first is
+half true. The claim that survives review:
+
+> **Framework identity is not required to decode and conservatively render supported OpenTelemetry
+> GenAI semantic-convention carriers. Producer scope and version remain correctness inputs for
+> private dialects, and for standard carriers whose occurrence semantics are locally ambiguous.**
+
+Why the weaker form is the honest one: when a rule decides that `gen_ai.assistant.message` is output
+rather than replay *because of the scope*, that scope is functioning as producer detection. The design
+requires exactly such a contract for Strands and for choiceless Logfire/OpenAI-Agents telemetry. The
+dependency is **narrowed, versioned and made explicit** — not removed.
+
+Selecting on instrumentation scope is still materially better than detecting a framework:
+
+- it is per instrumentation library and **per span**, where `sideseat.framework` describes a whole
+  process and mislabels spans emitted by a nested library;
+- it is **versioned**, so a contract can be bounded to the versions it was observed on;
+- generic semconv rules match on carrier family, operation and observation type and never consult it,
+  so scope refines rather than routes.
+
+### What the redesign can and cannot shrink
+
+Counted over today's code, so the payoff is a number rather than a feeling:
+
+| | Count | Can the redesign remove it? |
+| --- | --- | --- |
+| extractor families in `messages.rs` | 16 | — |
+| …of those, producer-independent (indexed `gen_ai.*`, current semconv messages, generic `input`/`output`) | 3 | already |
+| …genuine dialect decoders (OpenInference, Logfire, Vercel, ADK, LiveKit, MLflow, Traceloop, PydanticAI, LangSmith, LangChain/LangGraph, AutoGen, CrewAI, Claude Code) | 13 | **no** — the producer chose a private encoding |
+| private attribute-recovery families in `attributes.rs` (token names, usage JSON, request/response JSON, invocation parameters) | ~10 | **no** |
+| framework-recognition rules | 28 | they become metadata, not routing |
+
+So roughly **23 irreducible dialect adapters** survive as decoders. What the redesign removes is
+framework-specific *policy*, and there are six such couplings, each currently a place a fix must be
+made twice:
+
+1. extractor ownership and registration order;
+2. suppressing the generic reader when any dialect extractor matched (measured above — the third
+   ripple);
+3. the semconv-only tool-span gate plus a separate Vercel bypass;
+4. OpenInference cross-carrier enrichment and its representation choice;
+5. Logfire suppressing `request_data` on the strength of another carrier;
+6. Claude Code duplicate suppression inside decoding.
+
+**That list is the deliverable.** It is what "less fragile" means concretely: six decisions that today
+depend on a framework's identity or on another carrier's presence, replaced by per-observation claims.
+
+### The honest limit
+
+No system can interpret every future private dialect. If two producers emit identical OTLP meaning
+different things, the information is absent. Coverage says less than it looks: the support matrix
+recognises 32 frameworks and 11 have captures, so "correct for all frameworks" is an open-world claim
+under either architecture.
+
+Two cases make the boundary concrete:
+
+- a **new producer emitting correct semconv** under an unknown scope gets the generic claims and is
+  correct wherever the carrier's meaning is locally determined; it stays `Unknown` — conservative,
+  not correct — for an ambiguous carrier like `gen_ai.assistant.message`;
+- the same producer that *also* puts its real final answer in a private member (the CrewAI `raw`
+  shape, which is real) does **not** work automatically: profiles may not inspect arbitrary payload,
+  and `raw` means "answer" only inside a named dialect. The answer stays opaque.
+
+The achievable contract:
+
+- a conforming producer nobody has captured is **decoded and conservatively rendered** without a
+  framework label;
 - an unknown private carrier degrades conservatively **and visibly**;
 - onboarding a dialect adds local claims without changing established semantics.
+
+### Absorbing the next semconv revision
+
+Semconv is unstable and has already changed. The design is **better at semantic change and no better
+at alias churn**, which is worth knowing before calling it forward-compatible:
+
+| Change | Places to touch |
+| --- | --- |
+| a rename or alias | carrier-family declaration + a decoder alias — two, and a family-keyed profile is untouched. Today a `get_first` chain absorbs it in one place, so this is a small regression |
+| a new shape or transport (events becoming attributes, as already happened) | bundling + decoder + profile assignment — three, but each is local and named |
+| a change of *meaning* | profile rules and their conformance fixtures — which is the point: today a meaning change is spread across event recognition, attribute extraction, carrier semantics, normalisation and the input/output source lists |
+
+The missing piece is **one canonical versioned semconv compatibility module**, so alias churn stays a
+single-place edit. Not yet specified, and it should be.
 
 ## What survives, and what goes
 
@@ -692,3 +912,5 @@ reasoning is auditable rather than re-derived.
 | 2 | the claim model (stage 3) | **claims moved from the carrier instance to the observation** — one `output.value` holds a restated transcript and a new answer, so an instance-level claim is a cardinality error; authority became a sum type (dropping `multiplicity_authority` as derived, and excluding `Restates + SpanCompletion`, which claims nothing); added `ReferenceAuthority`, because "unambiguous stable reference" was the next hidden heuristic; replaced "predicates over the instance" with a closed declarative rule language, field-wise merging and explicit `refines` precedence; drew the line on what a profile may read; defined `Unknown`'s semantics; named the locally undecidable cases instead of guessing at them; replaced the assumed failure-mode coverage with a measured one — **three of four wrong-claim modes are caught by nothing today**, which is what forces annotated claim fixtures and a decision ledger | `_synthetic/answer_beside_the_conversation`; `dedup.rs`'s two contradictory uses of a call id; `feed/mod.rs`'s trace-global choiceless gate |
 | 3 | assembly, reconciliation, representative selection (stages 4-6) | **occurrences are blocks, not messages**, and identity is a *witness* token, not content — an occurrence is an equivalence class over creation and restatement witnesses, united only by a stable occurrence reference or a producer-declared copy relation; the `Creates`/`Creates` collision (`order_graph.rs:622`, an inner emission and its parent's) was a hole revision 2 could not express; matching became a global injective assignment with authority *tiers* separated from search order, since greedy is provably wrong here; a call/result reference is causality, **not** a matching tier; the provisional-to-confirmed merge algebra written out, with the honest note that the graph merge is monotonic while the returned order legitimately is not — membership and lineage are what stay stable; stages 4 and 5 became **one engine with two policies**, matching against `ReplayPrecedence` rather than the presentation DAG; representative selection became **per block occurrence**, because a whole-copy choice deletes blocks only the other copy held; added the "one fact, one job" table. Also: **the motivating Vercel example was overclaimed** — the committed golden and the new pure-semconv collision fixture are both correctly ordered, so the argument rests on the ripple table, not on that case | `order_graph.rs:622`; the existing backtracking replay matcher; `types.rs`'s block granularity; measurement of the committed `vercel-ai-js/tool-use` golden and `_synthetic/carrier_collision_agent_and_generation` |
 | 4 | stages 1, 2, 7 and buildability | **the persistence boundary**, which revisions 1-3 omitted: stages 1-2 run at ingest and 3-7 at read, and the facts stage 3 needs are not persisted — the instrumentation scope is *never captured for spans at all* (`extract/mod.rs:335`; the `scope_name` columns are metrics-only), so a scope-keyed profile has no input at read time. That is an unmentioned persisted-format change, and it makes provenance capture step 1. Stage 1 became a **`CarrierBundle`**, since one emission is routinely spread over sibling attributes (tool name + call id + arguments; OpenInference's dotted keys plus `input.value`; Vercel's `ai.response.*`). Stage 2's restriction was too broad to be true and now separates *syntactic* identity and order (permitted) from *occurrence* identity and *global* order (not), naming the two decoders that violate it. Stage 7: `order_graph` is reusable as algorithms, **not** as a module — its evidence collection reads exactly the `BlockEntry` facts this design deletes, and **SCC condensation does not exist**, contrary to revision 1. Specified the two things that could still make two implementations return different *membership*: injectivity is **per bundle, not global** (two parent snapshots must both match one occurrence, or invariant 6 fails), and the objective is authority-first, then cardinality. Added the per-block winner policy. And, on the reviewer's recommendation, **the document now argues the case against itself** and recommends incremental adoption over a rewrite | `extract/mod.rs:335`, the metrics-only `scope_*` columns, `RawMessage { source, content }`; `messages.rs:896`/`:1071`/`:3767`; `order_graph.rs:105`/`:999` |
+| 5 | reliability and scale | **stage 4 as specified is factorial in the worst case** (`n!/(n-m)!` injective assignments; it bites on repeated identical content with no stable ids — the shape that made the existing cross-trace matcher need a budget). Added the whole operational contract that revisions 1-4 lacked: a matching budget mirroring `MATCH_BUDGET = 20_000` with forced unions outside the search, canonical witness-locator traversal, and exhaustion that keeps proven matches and **under-strips** rather than guessing; a batched graph merge, since per-merge recomputation is `O(M(V+E))`; the admission that input-linearity is **not knowable from this document** and needs a stage-4 benchmark before any promotion. **Statelessness restated set-wise** — "the provisional node's id is kept" described mutating state that does not persist, so an occurrence keeps every witness id as an alias with the primary chosen by locator order; and **evidence is not monotonic across reads**, because ClickHouse may have merged away the earlier version, so the merge algebra must be a pure function of the rows now present. Chose **build-time profiles**, since the reconstruction cache is keyed on rows alone and a runtime-editable profile set is exactly the stale-answer failure that key discipline exists to exclude. And **"self-scaling" is the wrong goal for this layer** — autoscaling cannot reduce one 68 MB reconstruction's latency; the six checkable properties replace it | `feed/mod.rs:353`/`:404`; `feed/cache.rs`'s row-only key and `every_field_of_a_row_reaches_the_digest`; ClickHouse's inability to express an as-of read |
+| 6 | framework independence | **the claim was not defensible and is now weakened to one that is**: framework identity is not required to decode and conservatively render *supported semconv* carriers, while producer scope and version remain correctness inputs for private dialects and for standard carriers whose occurrence semantics are locally ambiguous. "A conforming producer works automatically" is false — a producer emitting correct semconv **plus** its real answer in a private member (the CrewAI `raw` shape) leaves that answer opaque, because profiles may not read arbitrary payload. Counted the payoff instead of asserting it: 13 of 16 extractor families and ~10 attribute-recovery families are **irreducible** dialect adapters, so what the redesign removes is the **six framework-specific policy couplings**, now listed as the deliverable. Added the semconv-revision analysis — better at meaning changes, slightly *worse* at alias churn unless one canonical versioned compatibility module exists, which is not yet specified. And the ripple table gained a third row, measured in this cycle: the "obviously right" fix of letting the generic reader fill an empty side failed three ways, ending in langgraph 12 → 28 messages, because `output.value` means *answer* on a generation span and *node state* on a chain span | `attributes.rs`'s 28 recognition rules and its private usage-JSON readers; `messages.rs`'s 16 extractor families; measurement of `crewai/files`, `answer_beside_the_conversation`, `nested_state_messages` and the langgraph suite |

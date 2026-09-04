@@ -1,0 +1,93 @@
+{
+  "label": "_synthetic/plain_text_generic_io",
+  "request_count": 1,
+  "span_count": 1,
+  "trace_count": 1,
+  "session_count": 0,
+  "span_views": {
+    "trace-1/chat model-x/span-1": {
+      "message_count": 2,
+      "role_sequence": [
+        "user",
+        "assistant"
+      ],
+      "tool_names": [],
+      "tool_definition_count": 0,
+      "messages": [
+        {
+          "index": 0,
+          "role": "user",
+          "entry_type": "text",
+          "content": "what is the capital of France?",
+          "content_digest": "17403c444c253bce",
+          "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "assistant",
+          "entry_type": "text",
+          "content": "Paris",
+          "content_digest": "e84ef81ba0d79dff",
+          "observation_type": "generation"
+        }
+      ]
+    }
+  },
+  "trace_views": {
+    "trace-1": {
+      "message_count": 2,
+      "role_sequence": [
+        "user",
+        "assistant"
+      ],
+      "tool_names": [],
+      "tool_definition_count": 0,
+      "messages": [
+        {
+          "index": 0,
+          "role": "user",
+          "entry_type": "text",
+          "content": "what is the capital of France?",
+          "content_digest": "17403c444c253bce",
+          "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "assistant",
+          "entry_type": "text",
+          "content": "Paris",
+          "content_digest": "e84ef81ba0d79dff",
+          "observation_type": "generation"
+        }
+      ]
+    }
+  },
+  "session_views": {},
+  "feed_view": {
+    "message_count": 2,
+    "role_sequence": [
+      "user",
+      "assistant"
+    ],
+    "tool_names": [],
+    "tool_definition_count": 0,
+    "messages": [
+      {
+        "index": 0,
+        "role": "user",
+        "entry_type": "text",
+        "content": "what is the capital of France?",
+        "content_digest": "17403c444c253bce",
+        "observation_type": "generation"
+      },
+      {
+        "index": 1,
+        "role": "assistant",
+        "entry_type": "text",
+        "content": "Paris",
+        "content_digest": "e84ef81ba0d79dff",
+        "observation_type": "generation"
+      }
+    ]
+  }
+}
