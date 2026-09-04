@@ -1,9 +1,59 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 12. Revision log at the end.
+**Status**: revision 13, after thirteen consecutive architecture reviews. Revision log at the end.
 
-What this describes: how OTLP spans from any GenAI framework become the message list the span,
-trace, session and feed views return. Not how they are stored, queued or served.
+What this describes: how OTLP spans from any GenAI framework become the message list the span, trace,
+session and feed views return — **and**, because thirteen reviews established that the semantics cannot
+be specified without them, what is persisted at ingest, what is hydrated per read, and what a caller can
+see. Revisions 1-12 opened with "not how they are stored, queued or served" and then specified
+persistence, cache keys, API versions, retention and data handling. That sentence was false, so it is
+gone rather than the content.
+
+## Status of every mechanism in this document
+
+The one table a reader needs first, because the rest of the document describes mechanisms at four
+different levels of authorisation and nothing else says which is which.
+
+| Mechanism | Status | Authorised work | Prerequisite | Promotion gate |
+| --- | --- | --- | --- | --- |
+| **Carrier-instance claims at ingest** (observation type decides a generic carrier's meaning) | **landed** (`1e623a45`) | maintain | — | mutation controls, both directions |
+| **Plain-text generic I/O** | **landed** | maintain | — | `_synthetic/plain_text_generic_io` |
+| **Resolver authority** — one order, `legacy_rank` opaque, feed consumes it | **approved** | build | — | byte-identical corpus output |
+| **SCC condensation and a degradation signal** | **approved** | build | resolver authority | a constructed cycle is reported, not silently broken |
+| **The request-scoped framing edge** | **approved** | build, shadow, promote | resolver authority | the 27-view ratchet empties |
+| **Instrumentation scope + carrier provenance persistence** | **approved** | build | — | a scope-keyed rule becomes expressible |
+| **Compact read envelope, stage 0R** | **approved** | build | — | the three already-loaded facts become reachable |
+| **Data classes and the `framework_config` rule** | **approved** | build | provenance | the sentinel-token test |
+| **Stage 8 / v2 output contract** | **separate project** | schema and read work | scope decision | v2 goldens |
+| **Profile language, global occurrence assembler, reconciliation rebuild** | **deferred** | shadow only | the stop/go gate below | a truth oracle *and* stage-4 candidate-count benchmarks |
+
+**The stop/go gate for the deferred track**, stated once so it cannot drift: *a reproducible defect,
+pinned by a committed fixture, that the current pipeline plus a local carrier-instance rule cannot fix
+and the occurrence model can.* Thirteen reviews have not produced one. Two candidate defects were
+repaired locally instead (the observation-type gate, plain-text generic I/O), one motivating defect did
+not reproduce at all, and the one confirmed ordering defect — request framing — needs an edge in the
+existing resolver rather than a new model.
+
+## The decision
+
+**Build three bounded things. Keep the existing extraction, deduplication and reconciliation.**
+
+1. verification and decision-ledger infrastructure;
+2. resolver authority, SCC diagnostics, and the framing edge;
+3. scope and provenance persistence, the read contract, and data classes.
+
+What thirteen reviews **established**: heuristic coupling is real and measured; the observation-type gate
+and plain-text reading were real local repairs needing no schema change; request framing is a
+reproducible defect across 27 trace views; and scope persistence, the read projection, the four views'
+totals, raw-data handling and cycle diagnostics each have genuine defects.
+
+What they did **not** establish: that the motivating carrier-collision defect exists; that a profile
+language would classify occurrences correctly; that a global assembler beats targeted local repairs;
+that stage 4 meets normal-path scaling; that false contraction is detectable on arbitrary telemetry; or
+that framework independence needs rebuilding — the normalisation layer already reads no framework at all.
+
+So the honest conclusion is not "build it" and not "nothing": it is the three parts above, with the
+occurrence model kept as a designed, costed alternative behind an evidence gate.
 
 ## The problem this replaces
 
@@ -76,7 +126,7 @@ observation type — a carrier *instance*, which is this document's whole princi
 to be free: `detect_observation_type` is a pure function of the span name and attributes, already
 computed for every span before message extraction runs. Admitting the generic answer carrier only on a
 generation span, and only when nothing already accounts for the span's output, is corpus-neutral across
-all 119 fixtures and repairs the shape (`1e623a45`,
+all 121 fixtures and repairs the shape (`1e623a45`,
 `_synthetic/dialect_question_generic_answer`). Mutation-verified in both directions: disabling the
 block loses the answer, and dropping the observation-type guard reproduces the langgraph expansion.
 
@@ -361,7 +411,12 @@ would return different answers under one key. Two ways out, and only one of them
 the rest of the system:
 
 - **profiles are build-time** — compiled in, changing only with the binary. A deploy replaces every
-  process and every cache starts empty, so the invariant holds for free. This is the choice.
+  process and every cache starts empty. Note precisely what this does and does not buy: determinism holds
+  **within one build**, and during a rolling deploy two replicas can interpret identical rows
+  differently. That is a real weakening of the cross-replica determinism the operational contract asks
+  for, and it needs one of three answers — return the normaliser version with the answer, route a session
+  consistently for the duration of a rollout, or state the window. It is not free. This is still the
+  choice, because the alternative is worse.
 - profiles are runtime data — then every read must pin one immutable snapshot and the key becomes
   `(rows digest, session grouping, mode, canonical profile-snapshot digest)`, covering every selector,
   assignment and `refines` edge in canonical order, as a content digest rather than a replica-local
@@ -377,19 +432,30 @@ rolling-deploy window is the same one any behaviour change already has.
 
 ## Stages
 
+The stage boundary and the **process** boundary are different, and earlier revisions confused them —
+one said the split fell "exactly between stage 2 and stage 3", the diagram persisted raw carriers
+*before* decoding, and stage 0R claimed to hydrate stages 3-7. The resolution: **stages 1-2 run at
+ingest**, and what crosses the persistence boundary is decoded observations plus provenance and
+raw-evidence *references*.
+
 ```
-raw carrier instances
-   → [ persisted; re-read per request - see the read projection, stage 0R ]
-   → syntax decoding            (payload shape → observations)
-   → typed evidence claims      (what this instance is evidence of)
-   → occurrences + causal relation
-   → session replay reconciliation
-   → presentation projection
-   → the output contract        (stage 8 - what the caller can actually see)
+at ingest:
+  1. carrier capture        (bundles, span context, instrumentation)
+  2. syntax decoding        (payload shape → observations, each with its claim)
+     ↓ persisted: observations, provenance, data class, raw-evidence references
+per read:
+  0R. read projection       (hydration - what the later stages are allowed to know)
+  4.  occurrences + causal relation
+  5.  session replay reconciliation
+  6.  representative selection
+  7.  presentation projection
+  8.  the output contract   (what a caller can see)
 ```
 
-Each stage may only know what is listed for it. A stage that needs a fact from a later stage is
-a design error, not something to thread through.
+Each stage may only know what is listed for it. A stage that needs a fact from a later stage is a design
+error, not something to thread through. Stage 3 (claims) is numbered with the ingest stages because it is
+where the claim is *attached*; whether the claim is computed at ingest or recomputed per read from
+persisted observations is a deferred-track question, not one this document settles.
 
 ### 1. Carrier capture
 
@@ -451,6 +517,10 @@ wins, per-carrier claiming, registration order — does not: two decoders must n
 by the order they were registered.
 
 ### 3. Evidence claims
+
+> **Deferred track.** Stages 3-6 below are a designed, costed alternative behind the stop/go gate — not
+> authorised work. They are kept because the costing is the product of thirteen reviews and would
+> otherwise be re-derived. Read them as a candidate design.
 
 **A claim attaches to an observation, not to a carrier instance.** Revision 1 put it on the
 instance and that was a cardinality error, refuted by a fixture already in the corpus.
@@ -591,8 +661,11 @@ not reappear inside a shape predicate.
 Revision 1 listed `Unknown` and never said what stage 4 does with it, which made the enum
 decorative. An `Unknown` observation:
 
-- creates an **explicitly provisional** occurrence when nothing else evidences its content, so the
-  content stays visible;
+- creates an **explicitly provisional** occurrence when nothing else evidences its content, **provided
+  the observation decoded as conversational content**. This is the distinction earlier revisions
+  conflated with the data-class rule: an unknown *occurrence semantics* on decoded content is a
+  provisional occurrence, while an unknown *data class*, or a carrier that did not decode at all, is
+  opaque evidence and is never promoted into the conversation;
 - contributes **no** production time, **no** cohesion, and **no** hard sequence edge;
 - may be matched *onto* by a later restatement, and strengthened by later direct evidence;
 - emits an unsupported-claim diagnostic naming the carrier and the span.
@@ -662,8 +735,11 @@ Occurrence = equivalence class over { CreateWitness } ∪ { RestatementWitness }
 ```
 
 Two **creation** witnesses may be united only by a reference with `kind: OccurrenceIdentity` and
-`replay_stability: Stable`, or by a producer-declared same-emission relation. **Content equality is
-not sufficient.** Absent such evidence they stay two occurrences, or one explicit ambiguity — never
+`replay_stability: Stable`, or by a producer-declared same-emission relation — and only across
+*independent* observations. Within **one** `Creates` observation, two positions are always two
+occurrences (invariant 5), so two entries of one emission list carrying the same stable id are
+**malformed evidence and are diagnosed**, never contracted. **Content equality is never sufficient
+anywhere.** Absent such evidence they stay two occurrences, or one explicit ambiguity — never
 silently merged.
 
 That case is real and revision 2 could not express it: `order_graph.rs:622` already observes a
@@ -715,21 +791,25 @@ create an occurrence — visible duplication is worse than a flagged uncertainty
 
 - a restatement matching nothing yields a provisional occurrence, so root-only telemetry stays
   useful, with **no** invented production time;
-- when direct evidence later arrives, the provisional node's id and its whole observation lineage are
-  **kept**; the creation witness joins its evidence set; edges from any separately built direct node
-  are redirected onto the canonical node, self-edges dropped and duplicate edges coalesced; existing
-  evidenced edges stay and newly justified cohesion and causal edges are appended; the production
-  anchor is added *as evidence*, never overwriting evidence with a scalar;
-- atomic groups, SCCs and the projection are then recomputed.
+- **stated set-wise, not as a mutation.** Earlier revisions wrote this as "when direct evidence later
+  arrives, the provisional node's id is kept and edges are redirected" — describing persistent state that
+  does not exist. A read is a pure function of the rows present *now*, so there is no node to keep and
+  nothing to redirect. The rule is: an occurrence's witness set is whatever the current rows evidence;
+  a class containing a creation witness is a confirmed occurrence, one containing only restatement
+  witnesses is provisional; its identity is the class's minimum witness locator, so any replica derives
+  the same id from the same rows;
+- a confirmed class takes its production anchor, cohesion and edges from its creation witnesses; a
+  provisional class has none of the three.
 
-**The graph merge is monotonic; the returned list is not, and that is correct.** New direct evidence
-can supply a production anchor, cohesion membership or a generation edge, and the topological
-projection may legitimately change — the design says as much where it declines strong stable
-insertion. What must be stable across a re-delivery is **membership and lineage**, not display
-position. Stating it the other way round would forbid ever correcting an order with better evidence.
+**The consequence, and it is not monotonicity.** Between two reads the evidence set may *shrink* — a
+ClickHouse merge can have removed the earlier version of a re-delivered span — so "evidence only
+accumulates" is false and cannot be relied on. What is guaranteed is that the answer is a function of
+the rows: identical rows give an identical answer on any replica, and a changed row may legitimately
+change membership *and* order. Earlier revisions promised stable membership across re-delivery, which is
+a promise about the store rather than about this pipeline.
 
-One case revision 2 could not answer, now explicit: if a provisional `"yes"` is followed by *two*
-distinct `Creates("yes")` observations, neither strengthens it. An equally-supported match stays
+One case earlier revisions could not answer, now explicit: if a provisional `"yes"` is accompanied by
+*two* distinct `Creates("yes")` observations, neither claims it. An equally-supported match stays
 ambiguous, because choosing one silently makes membership depend on arrival order.
 
 This removes "history detection" as a concept: a parent transcript is evidence referring to earlier
@@ -962,8 +1042,10 @@ by hand: three silent divergences in one file, each of which the compiler would 
 
 ### What stage 8 has to be
 
-A versioned projection, with one rule: **it may omit heavy evidence by reference, and may not silently
-erase provenance, ambiguity or a lossy transformation.**
+A versioned projection, with one rule **that binds v2 only**: it may omit heavy evidence by reference,
+and may not silently erase provenance, ambiguity or a lossy transformation. The v1 adapter necessarily
+erases all three — that is what byte-compatibility with today's shape means — so v1 is labelled a
+**lossy compatibility projection** rather than held to a rule it cannot satisfy.
 
 ```text
 project(occurrences, cohesion_groups, selected_representations, ordering, provenance, diagnostics)
@@ -1010,113 +1092,53 @@ only mine.
 
 ## Invariants
 
-Framework-independent, and each testable on its own:
+**One corrected set, stated once.** Earlier revisions printed a list and then a long audit rejecting
+parts of it, leaving both normative; the audit's conclusions won, so they are the list now. Each is
+framework-independent. The column that matters is whether a test exists **today** — nine did not, which
+is why the verification work is authorised ahead of every mechanism.
 
-1. **Evidence accounting** — every carrier instance is decoded, retained as opaque, or
-   produces a diagnostic. Nothing disappears silently.
-2. **Decoder locality** — decoding one carrier depends only on its payload and dialect.
-3. **No unsupported assertion** — every occurrence, multiplicity decision, causal edge and
-   anchor names the evidence justifying it.
-4. **Representation independence** — re-encoding or enriching an occurrence does not create
-   another one.
-5. **Multiplicity preservation** — two positions in a `Creates` observation are two occurrences
-   even with identical content; positions in a `Restates` observation prove nothing. Note this is
-   a *consequence* of the claim, not an independent check on it: it cannot detect a wrong claim,
-   only an assembler that ignores a right one.
-6. **Restatement idempotence** — adding a parent transcript, a duplicate span or another replay
-   changes neither membership nor causal order. The test must add a **semantically equivalent
-   transcript**, not a byte-identical duplicate span: the existing duplicate-span property test
-   passes trivially and does not exercise this.
-6a. **Claim conformance** — a claim fixture states the expected claim per observation,
-   independently of the message goldens, because a wrong claim that yields the right order is
-   invisible in a golden and a regenerated golden blesses it.
-6b. **Profile permutation** — permuting the profile registry yields byte-identical claims.
-7. **Replay invariance** — any linear extension of a prior partial order may be re-sent as a
-   snapshot without creating occurrences; matching is injective.
-8. **Authority separation** — choosing a better display representation cannot change identity,
-   placement, anchors or order.
-8a. **Representation completeness** — the block-occurrence set is independent of which rendering
-   wins. Forcing every alternative to win in turn must not remove a block. Invariant 8 forbids
-   *movement* and is silent about *loss*, which is a different failure.
-9. **Witnessed causality** — only local, evidenced relations become hard edges: atomic-emission
-   member order and cohesion; an unambiguous result after its call; matched generation inputs
-   before that generation's output.
-10. **Presentation independence** — changing presentation constraints cannot change the
-    occurrence multiset or the session reconciliation result.
-11. **Deterministic total projection** — acyclic evidence yields a deterministic linear
-    extension; contradictory evidence is localised to an SCC and reported.
-12. **Honest ambiguity** — indistinguishable identical plain messages stay explicitly ambiguous.
-    A rendering policy may collapse them; the model must not call that proven identity.
+| # | Invariant | Test today |
+| --- | --- | --- |
+| 1 | **Evidence accounting** — every carrier is decoded, retained as opaque, or diagnosed; nothing disappears silently | none. `carrier_semantics_are_declared` is blind to a *wholly dropped* carrier |
+| 2 | **Decoder locality** — decoding one carrier depends only on its payload and dialect, compared **before** claims or rendering | none. `reading_more_carriers_only_adds_messages` compares rendered output |
+| 3 | **No unsupported assertion** — every occurrence, multiplicity decision, edge and anchor names its evidence | the structural half only; a wrong claim can be cited as evidence |
+| 4 | **Representation independence** — re-encoding or enriching an occurrence does not create another | none |
+| 5 | **Multiplicity preservation** — two positions in one `Creates` observation are two occurrences, always; positions in a `Restates` observation prove nothing. A *consequence* of the claim: it catches an assembler that ignores a right claim, never a wrong claim | partial, corpus only |
+| 6 | **Restatement idempotence** — a proven restatement changes **membership** not at all. It may refine *order* when it carries `Ordered` sequence evidence. Applies when reconciliation completed; under budget exhaustion see below | only exact re-delivery, which passes trivially |
+| 7 | **Replay invariance** — a **producer-valid, branch-scoped** serialisation of a prior order may be re-sent without creating occurrences; matching is injective **per bundle**, so two parent snapshots may both match one occurrence | none |
+| 8 | **Authority separation** — choosing a display representation cannot change identity, placement, anchors or order | partial: compares role and kind only |
+| 8a | **Representation completeness** — the block-occurrence set is independent of which rendering wins. Invariant 8 forbids *movement* and is silent about *loss* | none |
+| 9 | **Witnessed causality** — only local evidenced relations are hard edges: emission member order and cohesion; a result after **a matched call occurrence** (not merely a reused id); matched generation inputs before that generation's output | partial |
+| 10 | **Presentation independence** — presentation constraints cannot change the occurrence multiset or the reconciliation result | **covered** — the best-tested invariant here |
+| 11 | **Deterministic projection** — acyclic evidence yields a deterministic linear extension; contradiction is localised to an SCC and reported. Applies to the **chronological projection**, not to the feed endpoint, which is newest-first by contract | determinism only; SCC condensation does not exist yet |
+| 12 | **Honest ambiguity** — ambiguity is in *matching a restatement*, never in whether two creations exist. Two identical positions in one `Creates` observation, parallel branches and retries are provably distinct | none, and `assert_no_duplicates` currently asserts the opposite for id-less repeats |
+| 13 | **No unwitnessed contraction** — distinct creation witnesses are never united without independently verifiable occurrence-identity evidence or a producer-declared copy relation. Content equality is never sufficient | none. This is the one that would catch false equivalence |
+| 14 | **A turn shows activity** — after the last user turn there is assistant or tool activity, unless the source proves error or cancellation | **covered** (`assert_has_an_answer`), and it caught three defects in this document |
 
-Deliberately *not* an invariant: "stable insertion" in its strong form. New evidence may
-legitimately add a causal edge and correct an earlier order. Stability applies to redundant and
-restating evidence only.
+Two entries from earlier revisions are **not** invariants and have moved to the verification section:
+claim conformance is an oracle requirement (it says the output matches annotations, not that the
+annotations are true), and profile permutation is a determinism property of a registry.
 
-### The invariant set audited: what it actually checks
+**Under budget exhaustion, 6 and 7 hold only where reconciliation reported completion.** Exhaustion
+deliberately under-strips, which *creates* provisional duplicates — so an unconditional idempotence
+promise and a conservative budget cannot both be true. Completion is reported to the caller
+(`reconciliation_complete`), and the guarantees are conditioned on it. Earlier revisions asserted both.
 
-The list above claims each invariant is "framework-independent and testable on its own". Audited,
-that is not true of all of them, and the honest accounting matters more than the count.
+Deliberately *not* an invariant: "stable insertion" in its strong form. New evidence may legitimately add
+an edge and correct an earlier order; stability applies to redundant and restating evidence only.
 
-**They are not independent.** Six pairs overlap, and a derived invariant is a second place to encode
-one rule — the exact objection that removed `multiplicity_authority` from the claim:
+### Why the set is shorter than it looks
 
-| Pair | The dependency |
-| --- | --- |
-| 3 ↔ 9 | an unevidenced hard edge violates both; 9's genuine content is its *locality whitelist*, not "must be evidenced" |
-| 3 ↔ 12 | calling two indistinguishable messages one proven occurrence is already an unsupported multiplicity decision |
-| 3 ↔ 5 | merging two `Creates` positions with no identity evidence violates both; 5 is the assembler-level test of 3 |
-| 5 ↔ 12 | same collapse, stated twice |
-| 4 ↔ 6 | when the added representation is a transcript, duplicate span or replay, 6 is the strictly stronger form |
-| 6 ↔ 7 | 7's *membership* clause is a special case of 6; its independent content is injectivity |
-
-And two entries are not invariants at all: **6a** (claim conformance) is an oracle requirement — it
-says the output matches hand-authored annotations, not that the annotations are true — and **6b**
-(profile permutation) is a determinism property of the registry. Both belong in the verification
-section, not the invariant list.
-
-The genuinely independent dimensions are six: input accounting and locality (1-2); the claim oracle
-and registry determinism (6a-6b); occurrence non-contraction and idempotence (4-7, 12, which should be
-merged); representation versus placement (8, 8a); presentation versus reconciliation (10); graph
+Six pairs of the earlier list encoded one rule twice — 3↔9, 3↔12, 3↔5, 5↔12, 4↔6, 6↔7 — which is the
+same objection that removed `multiplicity_authority` from the claim: a derived rule is a second place to
+get it wrong. The genuinely independent dimensions are six: input accounting and locality (1-2); the
+claim oracle and registry determinism (now in verification); occurrence non-contraction and idempotence
+(4-7, 12, 13); representation versus placement (8, 8a); presentation versus reconciliation (10); graph
 validity and projection (9, 11).
 
-**Most have no test today, and the generator cannot produce the shapes.** `feed/props.rs` generates
-single-message rows with one fixed tool id — no bundles, no claims, no multiple positions, no replays,
-branches, ambiguities or representation alternatives. So:
-
-| Test exists | Invariants |
-| --- | --- |
-| none — statements of intent | 1, 2, the semantic half of 3, 4, 6a, 6b, 7, 8a, 12 |
-| a weaker approximation only | 5, 6, 8, 9, 11 |
-| genuinely covered | 10 (single-trace and session ordering-independence), though it compares rendered content rather than occurrence identity |
-
-Two specific gaps worth naming because they read as covered and are not:
-`carrier_semantics_are_declared` only sees carriers that already produced classified blocks, so a
-**wholly dropped** carrier is invisible to it — invariant 1's test does not exist. And
-`reading_more_carriers_only_adds_messages` observes rendered output, not decoder output, so it is not a
-test of decoder locality.
-
-### Several kept invariants would falsely accuse
-
-The document has a table of rejected invariants; the kept ones need the same audit.
-
-| Invariant | Would fire on | Correction |
-| --- | --- | --- |
-| 6, "another replay changes neither membership nor causal order" | a genuinely retried identical call, a branch-local or subagent occurrence — if equivalence is decided from *content* | restrict to a replay **proven** to restate the same occurrence set |
-| 6, again | `Restates { sequence: Ordered }` — adding previously absent ordered evidence may legitimately refine order, which 6 forbids | membership is invariant; order may be refined by new *ordered* evidence |
-| 7, "any linear extension" | a topological extension interleaving parallel branches in a sequence no producer can serialise | quantify over producer-valid `ReplayPrecedence` serialisations within one branch scope |
-| 9, "an unambiguous result after its call" | parallel calls, cancelled and error turns with unanswered calls, subagent results whose call was never exported | "unambiguous" must require a *matched call occurrence*, not a reused id |
-| 11, deterministic total projection | the project feed, which is deliberately newest-first across responses, so a result legitimately precedes its earlier call | applies to the stage-7 chronological projection, **not** to the feed endpoint |
-| 12, identical plain messages "stay ambiguous" | two identical positions in one `Creates` observation, parallel branches, retried calls — all provably distinct | the ambiguity is in *matching a restatement* to them, never in whether two creations exist |
-
-One thing the list also **dropped** and should not have: a completed turn retains an answer. The
-existing `assert_has_an_answer` is what caught three of the defects in this document. It was omitted
-because `strands/error` legitimately has none.
-
-Review 7 proposed the condition *"a turn with explicit successful completion evidence has an answer"*,
-and a committed fixture **falsifies it**: `agent-framework/image_gen` carries `finish_reason: "stop"`
-with no answer content at all. A completion marker is not evidence that content exists. The invariant
-therefore keeps its current form, and the exemption keeps its own justification — see the cross-framework
-section for the measurement.
+And the generator cannot currently produce a single shape most of them need — `feed/props.rs` emits
+isolated rows holding one message, with no hierarchy, bundles, copies or branches. That is why
+verification is authorised ahead of every mechanism rather than beside it.
 
 ### False equivalence is still not detectable, and this is the load-bearing admission
 
@@ -1143,23 +1165,6 @@ production telemetry carrying no stable occurrence marker, that ground truth **i
 inferring it from identical content is the heuristic this design exists to remove. Synthetic fixtures
 and out-of-band capture annotations can supply it; the normaliser cannot. That is an information limit,
 not an implementation gap.
-
-### Is this design falsifiable? Partly — and the honest answer matters
-
-- **Mechanical errors: yes.** Presentation-reconciliation coupling fails
-  `ordering_constraints_do_not_change_a_session_s_messages`; exact redelivery fails
-  `redundant_evidence_does_not_change_the_answer`; collapsing CrewAI's genuine repeat fails
-  `repeated_identical_calls_keep_both_and_stay_resolvable`.
-- **The central semantic claim: no.** A subtly wrong `Restates` that collapses a genuine id-less repeat
-  has no test that must fail. A claim-conformance fixture fails only if that exact observation was
-  independently annotated.
-
-So for a corpus case whose count changes, `message_goldens` produces a diff and a human decides. For a
-collapse already blessed by a golden, or a shape absent from the corpus, **nothing fails** — and "no
-duplicates" may certify the error. The design is therefore an improvement in *structure and
-attribution*, and it does not, on its own, replace "the goldens change and a human reviews the diff"
-as the guarantee for the one distinction everything rests on. Anything stronger requires per-occurrence
-ground truth that is added deliberately, fixture by fixture.
 
 ## The verification apparatus, specified
 
@@ -1324,22 +1329,6 @@ user must see. And it fails if an extra violation appears, if the expected viola
 the raw source starts carrying the missing evidence, or if the diagnostic is gone.
 `REORDERS_UNDER_PER_CARRIER` already does the bidirectional half correctly — every listed entry must
 still occur, and a fixed one must be removed. The pairing and answer exemptions need the same.
-
-## One fact, one job
-
-Revision 1's whole diagnosis was that `batch_time` did three jobs and one quality score did two. The
-same shape is easy to reintroduce in a *design*, so the separations are listed rather than assumed.
-Each row was a conflation present in an earlier revision of this document:
-
-| Fact | Its one job | What it must not also decide |
-| --- | --- | --- |
-| a call/result reference | a causal edge (stage 7) | occurrence identity (stage 4) — unless the id is itself `OccurrenceIdentity` |
-| `ReplayPrecedence` | what a provider may legally have serialised | presentation order |
-| `PresentationConstraints` | the order shown | replay admissibility |
-| a provisional occurrence | keeping unwitnessed content visible | being a silent identity target for the first arriving witness |
-| a chosen rendering | how a block is displayed | which blocks exist |
-| evidence authority (the tier table) | how much a class of evidence proves | the order a search explores candidates |
-| credible time | ready-node priority | a causal edge |
 
 ## The operational contract
 
@@ -1615,7 +1604,11 @@ The achievable contract:
 - a conforming producer nobody has captured is **decoded and conservatively rendered** without a
   framework label;
 - an unknown private carrier degrades conservatively **and visibly**;
-- onboarding a dialect adds local claims without changing established semantics.
+- onboarding a dialect may require a bundle declaration, a decoder, claims, fixtures **and a release** —
+  earlier revisions said "adds local claims", which understates it, since 13 dialect decoders are
+  irreducible and a private answer stays opaque without one. What must hold is *non-interference*:
+  onboarding must not change another producer's semantics, and that needs its own test rather than
+  following from field-wise profile merging.
 
 ### Absorbing the next semconv revision
 
@@ -1631,96 +1624,48 @@ at alias churn**, which is worth knowing before calling it forward-compatible:
 The missing piece is **one canonical versioned semconv compatibility module**, so alias churn stays a
 single-place edit. Not yet specified, and it should be.
 
-## What survives, and what goes
+## The plan
 
-**Survives**: `PositionPath` and carrier-instance provenance; the content normalisers; content
-and binary fingerprints (as matching tools); operation type, span hierarchy, raw timestamps;
-exact call/result references; observation→occurrence lineage; injective replay matching;
-atomic-emission contraction; generation input→output dataflow; deterministic topological
-projection; separate display and ordering timestamps; every diagnostic.
+Five separate orderings had accumulated — a five-step recommendation, a nine-step migration, review 9's
+two increments, review 8's verification-first sequence and review 10's stage-8 migration — and they could
+not all be followed. This is the single one. Steps 1-7 are authorised; 8 is a gate; 9-11 happen only if
+it passes.
 
-Not on that list, though revision 1 put it there: **SCC condensation**, which does not exist yet.
-
-**Goes**: the name-keyed `semantics_for`; extractor first-match/claiming and priority order;
-`is_input_source`/`is_output_source` prefix lists; `promoted_to_span_output`; the whole
-multi-phase `history.rs`; content-based `MessageIdentity` as occurrence identity;
-`call_repeat_ordinals`; scalar quality as a membership or placement mechanism; birth-time maps,
-`batch_key`, `batch_times`, `feed_positions` and the legacy tuple sort; id-less correlation as a
-hard identity mutation.
-
-`order_graph`'s *algorithms* stay — contraction, sparse edges, deterministic Kahn, causal
-precedence. Its evidence collection and its API go, and SCC condensation is new work rather than
-preserved work (see stage 7). The resolver is already live in production with nearly every constraint
-class enabled, so it can and does linearise the wrong graph perfectly.
-
-## Should this be built? — the case against, and the recommendation
-
-Stated here because a design document that only argues for itself is not evidence. The case
-**against** the rewrite is strong, and most of it comes from this document's own measurements:
-
-- the motivating ordering defect **does not reproduce** — both the committed Vercel golden and the
-  purpose-built pure-semconv collision fixture are correctly ordered;
-- the ripple evidence proves the layers are *coupled*; it does not prove this replacement model is
-  right;
-- the resolver already runs in production with every constraint class promoted;
-- the rewrite adds a profile language, an authority lattice, a global matcher, a graph merge algebra,
-  a persisted-format change and a nine-step migration;
-- three of the four wrong-claim failure modes are, by this document's own table, caught by nothing —
-  so the rewrite would ship with less detection than the thing it replaces until the annotated claim
-  fixtures exist;
-- the corpus is narrower than 119 fixtures suggests: 11 of 32 recognised frameworks have captured
-  coverage, so "correct for all frameworks" is an open-world claim either way.
-
-**The recommendation is therefore not to rewrite, but to adopt this model incrementally**, in an order
-where each step is worth doing even if the next never happens:
-
-| # | Step | Worth doing alone because |
+| # | Step | Done when |
 | --- | --- | --- |
-| 1 | Capture and persist carrier provenance, event ordinals and **instrumentation scope** | scope is not recorded at all today and nothing downstream can be scope-aware until it is. A pure addition for the locator and the scope — but **not** for raw payloads, which `raw_span` already holds losslessly: those persist as a reference, per the data-class rule |
-| 2 | Refactor `order_graph` into a pure resolver (`nodes, groups, edges, priorities`), with real SCC condensation and a degradation signal | a cycle currently releases the smallest node and reports nothing |
-| 3 | Claim ledger and annotated claim fixtures, in shadow mode | makes the three silent failure modes detectable, whatever decides the claims |
-| 4 | Move cross-carrier authority out of decoders (OpenInference enrichment, Claude Code suppression) | those are stage-4 and stage-6 decisions sitting in stage 2, and each is a place a fix has to be made twice |
-| 5 | Only then replace dedup and reconciliation — and only against a **reproducible** membership or ordering failure | the one case that motivated the rewrite was not reproducible; the next should be pinned by a fixture before any mechanism changes |
+| 1 | The `SourceProgram` truth generator, stage observables, mutation controls, and the corrected invariant suite | each new test **fails** against a deliberately broken pipeline |
+| 2 | Make the resolver authoritative for trace *and* feed, with `legacy_rank` opaque | byte-identical corpus output |
+| 3 | SCC condensation and a degradation signal, then the request-scoped framing edge: shadow, then promote | a constructed cycle is reported; the 27-view ratchet empties |
+| 4 | Persist instrumentation scope, carrier provenance, ordinals, data class and **raw-evidence references** | a scope-keyed rule is expressible; no second copy of any payload |
+| 5 | The compact read envelope; settle the v2 schema and keep v1 explicitly lossy | the three already-loaded facts become reachable |
+| 6 | The claim ledger and annotated claims, in shadow mode | a claim's provenance can be printed for every observation |
+| 7 | Move the two confirmed cross-carrier decisions out of decoders (OpenInference enrichment, Claude Code suppression) | no output change |
+| **8** | **Stop/go gate** | a reproducible committed defect that needs the occurrence model, **and** stage-4 candidate-count benchmarks inside budget |
+| 9 | Shadow assembler → membership switch → reconciliation → representative selection → occurrence-driven graph | one explainable delta per promotion |
+| 10 | v2 occurrence output, generated client types, v2 goldens; the v1 adapter stays byte-compatible | v1 unchanged for existing callers |
+| 11 | Switch views, delete the old heuristics, regenerate goldens **last** | zero unreviewed deltas |
 
-**Landed already, and it changes the estimate.** The first carrier-*instance* claim is in
-(`1e623a45`): the generic answer carrier is admitted only on a **generation** span, decided by
-`detect_observation_type`, which is a pure function of the span name and attributes and is already
-computed before message extraction runs. Corpus-neutral, mutation-verified both ways — disabling it
-loses the answer on `_synthetic/dialect_question_generic_answer`, and dropping the observation-type
-guard reproduces the langgraph 12 → 28 expansion.
+"Resolver last" from review 8 means *occurrence-driven promotion* last — not the neutral authority
+plumbing in step 2, which everything else depends on.
 
-The lesson for step 1: **span context is available at ingest for free.** So the persistence work is
-needed for *scope* and *raw carrier payloads* — the facts nothing derives — and not for span context,
-which narrows step 1 considerably and means claims keyed on operation and observation type can be built
-before any schema change.
+**The rule for goldens**, unchanged and load-bearing: do not regenerate until every delta is attributable
+to a named claim, union, replay match or edge. "The corpus changed by 22 fixtures" is not evidence of
+correctness; "these three occurrences moved because these generation-dataflow edges became available" is.
 
-The target model below keeps its value as vocabulary and as the destination. What it does not have yet
-is a defect that only it can fix.
+### What is deferred, and why it is kept
 
-## Migration, if the full model is built
+The profile language, the global occurrence assembler, the merge algebra and the reconciliation rebuild
+remain fully designed in this document **and are not authorised**. Keeping the design is deliberate: the
+work of the last thirteen reviews is the costing, and discarding it would mean re-deriving it the next
+time a defect looks structural. But it is a candidate design behind an evidence gate, not a plan of
+record, and every section describing it should be read that way.
 
-Each step verifiable against the 119-fixture corpus on its own.
+## Revision log — history, not instructions
 
-| # | Step | Verification | Evidence it is wrong |
-| --- | --- | --- | --- |
-| 1 | Canonical fixtures: same key on generation vs agent, root-only snapshot, undeclared conforming producer, unknown carrier, **mixed-authority carrier** (`answer_beside_the_conversation` already is one) | New invariants fail on the old path for the intended reasons | A fixture depends on a framework label, or does not reproduce the collision |
-| 2 | `CarrierInstance`, `Observation`, provenance ledger beside the current blocks | Byte-identical goldens; every block traces to observations; every carrier decoded, opaque or diagnosed | Any output delta, or an unaccounted carrier |
-| 3 | Profile registry and observation claims, shadow mode, with the decision ledger and annotated claim fixtures | Corpus-wide claim report; registry permutation is byte-identical; Vercel root and `chat` get different claims without framework identity; the mixed carrier gets two different claims | An observation's claim changes because of an unrelated span, semconv needs `sideseat.framework`, or a claim's provenance cannot be printed |
-| 4 | Shadow occurrence assembler | Occurrence multiset vs current output; duplicate spans and root restatements idempotent; direct-emission repeats survive | A snapshot creates duplicates, direct repeats collapse, or membership changes are unexplained |
-| 5 | Membership from occurrences, legacy presentation retained | Count and content invariants, answer and pairing checks, reviewed delta list | Missing answers, new unmatched results, unexplained ambiguity growth |
-| 6 | Cross-trace reconciliation against the occurrence DAG | Every valid linear extension strips fully; presentation settings preserve membership | Ordering options change membership, or matching over-strips a genuine repeat |
-| 7 | Representative selection separated from placement | Force every alternative representative to win; multiset and order unchanged | Any tie flip moves or deletes an occurrence |
-| 8 | Occurrences into the resolver; promote edge classes one at a time | Every movement names its edge; the Vercel case becomes calls → results → final | The target stays wrong, unrelated movement has no edge, or time acts as causality |
-| 9 | Switch each view, dual-run, then delete the old heuristics | Zero unreviewed deltas; unknown-carrier tests stay conservative | A removed heuristic changes membership — the new model did not replace it |
-
-**The rule for goldens**: do not regenerate until a delta is attributable to a named claim or
-causal edge. "The corpus changed by 22 fixtures" is not evidence of correctness; "these three
-occurrences moved because these generation-dataflow edges became available" is.
-
-## Revision log
-
-Each revision is a design review that found something the previous one had wrong. Kept so the
-reasoning is auditable rather than re-derived.
+**Non-normative.** Each row is a design review that found something the previous revision had wrong.
+Kept because the reasoning is the expensive part and re-deriving it would cost more than reading it — but
+nothing here is a specification, and a row may describe a mechanism a later revision deleted (revision
+3's "one fact, one job" table is one). Where a row and the sections above disagree, the sections win.
 
 | Rev | Focus | What it changed | Refuted by |
 | --- | --- | --- | --- |
@@ -1736,3 +1681,4 @@ reasoning is auditable rather than re-derived.
 | 10 | the destination type model | Added **stage 8, the output contract**, which the design did not have - and the gap was a contradiction rather than an omission: the invariants promise honest ambiguity, representation completeness and evidence accounting while the DTO exposes none of it, and an invariant the caller cannot observe is not a guarantee. Catalogued what the current shape loses, including that the API returns a **flat list of blocks under a field named `messages`** with `total_messages` counting blocks, so one provider message holding text and two images is indistinguishable from several messages; that an unknown role silently becomes `User`, turning a parse failure into a plausible false turn; that request parameters and the provider response id are extracted and persisted but **not loaded by the message projection**; that structured output's schema and mode are dropped when tool blocks are split, and the same logical structured output is `Json` for one framework and `ToolUse` for another with nothing recording the equivalence; that streaming's chunk count is recognised and discarded; and that `BlockEntry` carries provenance which `BlockDto` declines to send. Fixed three **live contract mismatches** in the hand-mirrored client types, each costing real information. Stated the scope decision the document owes: SideML is used as a canonical model and implemented as a presentation one, and must be declared as one or the other | verified: server `ToolResult.name` (Gemini/ADK identify a result only by name) absent from the client, `ToolUse.input` declared as an object where the server sends any JSON, `Unknown` missing its `raw` |
 | 11 | the read path | **Stage 8 specified an output that cannot be built from its input** - revision 10 named envelopes and gave no stage the job of hydrating them, which is review 4's persistence finding one layer later. Added **stage 0R, the read projection**, before reconstruction rather than inside stage 8, because hydration decides what stages 3-7 may know, how wide the query is, and what enters the cache key, and is independently testable per backend. Audited persisted vs loaded vs reachable: three facts are **already loaded and still unreachable** (input/output tokens, both span timestamps, the exact exception fields), so omitting them saves no bandwidth; a dozen more need a second request joined on `(trace_id, span_id)`; and the instrumentation scope is reachable nowhere because extraction ignores `scope_spans.scope`. `include_raw_span` is **not accepted on the message endpoints at all**, and even where it is, using it requires a client to reimplement the dialect fallback chains and the enrichment - so it is a debugging hatch, not a contract. The four views report **four different totals**, the feed's being 'spend on message-query-eligible spans of this page', which is none of the three things a caller might mean; and block-level `tokens`/`cost` are the span's totals copied per block, so the names invite a wrong sum. The cache settles the widening question: a field that affects the answer **must** be in the row or a changed parameter serves a stale envelope under an unchanged key | measured: a second session-sized request roughly doubles p50 (23.5 → ~47 ms DuckDB, 357 → ~715 ms ClickHouse) against `additional bytes / 27 MB/s` for same-query widening |
 | 12 | data sensitivity | The corpus already contains the proof: `crewai/agent_core` is gitignored because CrewAI serialises its whole model configuration into a span attribute and the capture held live AWS credentials. **Corrected revision 11's claim that provenance persistence is "a pure addition"** - for the locator and the scope it is, for *lossless raw payloads* it is not: `raw_span` already holds a lossless copy, so persisting them again duplicates sensitive bytes and moves them from a debugging archive into the hot reconstruction contract, the cache key included. A carrier member therefore persists a **reference**, a digest and a data class rather than the bytes. Established the principled line, which is not "does this look like a secret" (a regex that misses the next format and corrupts a prompt discussing credentials) but **what kind of thing the value is** - and one rule follows: `framework_config` is **never a conversation occurrence**, which is exactly what the third ripple-table failure did to `crewai/files`. Enforceable *because* of "carrier instance, not carrier name", the same principle paying off a third time. Traced every copy a secret-bearing span makes today, documented the DuckDB/ClickHouse retention asymmetry (count-only by default versus a 90-day TTL), and specified the sentinel-token verification | verified: `build_raw_span_json` filters nothing; no redactor exists (the helper only recognises producer placeholders); the four message views never load `raw_span`; one trace-level log carries 100 characters of an unparseable value |
+| 13 | the document as one artefact | **Restructured rather than extended.** Twelve area reviews had accumulated 12 live contradictions, five incompatible plans, and sections that read as instructions for work nobody had authorised. Fixed: the opening claim "not how they are stored" was false and is gone; the stage diagram now separates the **stage** boundary from the **process** boundary (stages 1-2 at ingest, 0R hydrating the rest); `Unknown` had two incompatible meanings, now split into unknown *occurrence semantics* on decoded content versus an unknown *data class*, which is never promoted; the provisional merge was written as persistent mutation in a stateless system and is now **set-wise**, with the honest consequence that evidence can *shrink* between reads so "monotonic" was wrong; the invariant list and its own audit were both normative, and are replaced by **one corrected set of 14** with a column saying which have a test today (five do); idempotence and full stripping are now **conditioned on `reconciliation_complete`**, since a conservative budget deliberately under-strips; stable-identity contraction is scoped to *independent* observations, so two entries of one emission list are malformed evidence rather than contracted; build-time profiles no longer claim cross-replica determinism "for free"; and stage 8's no-erasure rule binds **v2 only**, since a byte-compatible v1 necessarily erases. Deleted as dead weight: "one fact, one job", "what survives and what goes", and a duplicated falsifiability section. Added **the status table** and **one plan** replacing five. And the verdict that matters: the case is stronger as a *diagnosis* and weaker as a *rewrite* - three bounded parts are authorised, the occurrence model is deferred behind a stated gate | the document's own measurements: the motivating defect did not reproduce, two candidate defects were repaired locally, and the normalisation layer reads no framework |
