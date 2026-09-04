@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 6. Revision log at the end.
+**Status**: design, under review. Revision 7. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -68,16 +68,31 @@ Three attempts to open it, each measured:
 | …admit only the *answer* side, gated on the declared `carrier_holds_span_output` | langgraph 12 → 28 messages: `output.value` on a `Prompt` or `should_continue` node is node state, not an answer |
 
 The third failure is the thesis restated at the smallest possible scale: **`output.value` means "the
-answer" on a generation span and "node state" on a chain span**, and extraction cannot tell them apart
-because it does not have the span's observation type where the decision is made. No gate over carrier
-*names* can be right here. Reverted; the shape is kept as a stated limitation rather than a fixture,
-because a failing test that cannot be fixed without the redesign is a permanently red build.
+answer" on a generation span and "node state" on a chain span**, and no gate over carrier *names* can
+tell them apart.
 
-What did survive from that session is a separate, real defect it uncovered: `extract_json` returns
-`None` for anything `serde_json` rejects, so a **plain-text** `output.value` was dropped entirely —
-and `text/plain` is a documented OpenInference mime type. Now read as text
-(`_synthetic/plain_text_generic_io`, mutation-verified). Its one corpus change is a repair: a
-`RunnableSequence` span view went from 0 messages to the prompt it actually carried.
+**And that is where the redesign paid for itself the first time.** The separating fact is the span's
+observation type — a carrier *instance*, which is this document's whole principle — and it turned out
+to be free: `detect_observation_type` is a pure function of the span name and attributes, already
+computed for every span before message extraction runs. Admitting the generic answer carrier only on a
+generation span, and only when nothing already accounts for the span's output, is corpus-neutral across
+all 119 fixtures and repairs the shape (`1e623a45`,
+`_synthetic/dialect_question_generic_answer`). Mutation-verified in both directions: disabling the
+block loses the answer, and dropping the observation-type guard reproduces the langgraph expansion.
+
+So the third row of the ripple table is the one case where the diagnosis produced a fix rather than
+another revert — and it did so *at ingest, with no schema change*, which is a fact the migration plan
+had to absorb.
+
+Two other real defects came out of the same session:
+
+- `extract_json` returns `None` for anything `serde_json` rejects, so a **plain-text** `output.value`
+  was dropped entirely — and `text/plain` is a documented OpenInference mime type. Now read as text
+  (`_synthetic/plain_text_generic_io`). Its one corpus change is a repair: a `RunnableSequence` span
+  view went from 0 messages to the prompt it actually carried.
+- CrewAI's use of `input.value` for its whole agent configuration is why the *question* side keeps the
+  stricter rule. Configuration is not a turn, and it is the same attribute that makes one CrewAI
+  fixture gitignored for holding credentials.
 
 ## The principle
 
@@ -637,6 +652,129 @@ Deliberately *not* an invariant: "stable insertion" in its strong form. New evid
 legitimately add a causal edge and correct an earlier order. Stability applies to redundant and
 restating evidence only.
 
+### The invariant set audited: what it actually checks
+
+The list above claims each invariant is "framework-independent and testable on its own". Audited,
+that is not true of all of them, and the honest accounting matters more than the count.
+
+**They are not independent.** Six pairs overlap, and a derived invariant is a second place to encode
+one rule — the exact objection that removed `multiplicity_authority` from the claim:
+
+| Pair | The dependency |
+| --- | --- |
+| 3 ↔ 9 | an unevidenced hard edge violates both; 9's genuine content is its *locality whitelist*, not "must be evidenced" |
+| 3 ↔ 12 | calling two indistinguishable messages one proven occurrence is already an unsupported multiplicity decision |
+| 3 ↔ 5 | merging two `Creates` positions with no identity evidence violates both; 5 is the assembler-level test of 3 |
+| 5 ↔ 12 | same collapse, stated twice |
+| 4 ↔ 6 | when the added representation is a transcript, duplicate span or replay, 6 is the strictly stronger form |
+| 6 ↔ 7 | 7's *membership* clause is a special case of 6; its independent content is injectivity |
+
+And two entries are not invariants at all: **6a** (claim conformance) is an oracle requirement — it
+says the output matches hand-authored annotations, not that the annotations are true — and **6b**
+(profile permutation) is a determinism property of the registry. Both belong in the verification
+section, not the invariant list.
+
+The genuinely independent dimensions are six: input accounting and locality (1-2); the claim oracle
+and registry determinism (6a-6b); occurrence non-contraction and idempotence (4-7, 12, which should be
+merged); representation versus placement (8, 8a); presentation versus reconciliation (10); graph
+validity and projection (9, 11).
+
+**Most have no test today, and the generator cannot produce the shapes.** `feed/props.rs` generates
+single-message rows with one fixed tool id — no bundles, no claims, no multiple positions, no replays,
+branches, ambiguities or representation alternatives. So:
+
+| Test exists | Invariants |
+| --- | --- |
+| none — statements of intent | 1, 2, the semantic half of 3, 4, 6a, 6b, 7, 8a, 12 |
+| a weaker approximation only | 5, 6, 8, 9, 11 |
+| genuinely covered | 10 (single-trace and session ordering-independence), though it compares rendered content rather than occurrence identity |
+
+Two specific gaps worth naming because they read as covered and are not:
+`carrier_semantics_are_declared` only sees carriers that already produced classified blocks, so a
+**wholly dropped** carrier is invisible to it — invariant 1's test does not exist. And
+`reading_more_carriers_only_adds_messages` observes rendered output, not decoder output, so it is not a
+test of decoder locality.
+
+### Several kept invariants would falsely accuse
+
+The document has a table of rejected invariants; the kept ones need the same audit.
+
+| Invariant | Would fire on | Correction |
+| --- | --- | --- |
+| 6, "another replay changes neither membership nor causal order" | a genuinely retried identical call, a branch-local or subagent occurrence — if equivalence is decided from *content* | restrict to a replay **proven** to restate the same occurrence set |
+| 6, again | `Restates { sequence: Ordered }` — adding previously absent ordered evidence may legitimately refine order, which 6 forbids | membership is invariant; order may be refined by new *ordered* evidence |
+| 7, "any linear extension" | a topological extension interleaving parallel branches in a sequence no producer can serialise | quantify over producer-valid `ReplayPrecedence` serialisations within one branch scope |
+| 9, "an unambiguous result after its call" | parallel calls, cancelled and error turns with unanswered calls, subagent results whose call was never exported | "unambiguous" must require a *matched call occurrence*, not a reused id |
+| 11, deterministic total projection | the project feed, which is deliberately newest-first across responses, so a result legitimately precedes its earlier call | applies to the stage-7 chronological projection, **not** to the feed endpoint |
+| 12, identical plain messages "stay ambiguous" | two identical positions in one `Creates` observation, parallel branches, retried calls — all provably distinct | the ambiguity is in *matching a restatement* to them, never in whether two creations exist |
+
+One thing the list also **dropped** and should not have: a completed turn retains an answer. The
+existing `assert_has_an_answer` is what caught three of the defects in this document. It was omitted
+because `strands/error` legitimately has none — but the right condition is *"a turn with explicit
+successful completion evidence has an answer"*, not "every fixture except the error one".
+
+### False equivalence is still not detectable, and this is the load-bearing admission
+
+The failure the system most fears is two genuine occurrences collapsed into one. It is invisible in
+goldens (the golden records the collapse as correct) and `assert_no_duplicates` may actively *enforce*
+it. Checked against the list: invariant 5 only works after an observation was correctly labelled
+`Creates` (the circularity the invariant itself concedes); invariant 3 passes if the union cites a
+*wrong* `Restates` claim as its evidence; invariant 6 positively requires restatements to collapse;
+invariant 12 passes if the wrong claim is taken to make the messages distinguishable.
+
+The missing invariant, which should be added:
+
+> **Distinct creation witnesses are never contracted** unless independently verifiable
+> occurrence-identity evidence, or an independently annotated producer copy relation, connects them.
+
+Its property test discriminates five cases: the same witness locator redelivered (count unchanged); a
+fresh witness locator with identical content (count +1); parallel branches with identical content (two
+occurrences); a retried identical call with fresh creation evidence (two occurrences); a stable
+reference or declared same-emission relation (contraction permitted).
+
+That catches an **assembler** that ignores correct claims. It cannot catch a **profile** that labels a
+creation `Restates`, unless the test has ground truth from outside the telemetry. For arbitrary
+production telemetry carrying no stable occurrence marker, that ground truth **is not constructible** —
+inferring it from identical content is the heuristic this design exists to remove. Synthetic fixtures
+and out-of-band capture annotations can supply it; the normaliser cannot. That is an information limit,
+not an implementation gap.
+
+### Is this design falsifiable? Partly — and the honest answer matters
+
+- **Mechanical errors: yes.** Presentation-reconciliation coupling fails
+  `ordering_constraints_do_not_change_a_session_s_messages`; exact redelivery fails
+  `redundant_evidence_does_not_change_the_answer`; collapsing CrewAI's genuine repeat fails
+  `repeated_identical_calls_keep_both_and_stay_resolvable`.
+- **The central semantic claim: no.** A subtly wrong `Restates` that collapses a genuine id-less repeat
+  has no test that must fail. A claim-conformance fixture fails only if that exact observation was
+  independently annotated.
+
+So for a corpus case whose count changes, `message_goldens` produces a diff and a human decides. For a
+collapse already blessed by a golden, or a shape absent from the corpus, **nothing fails** — and "no
+duplicates" may certify the error. The design is therefore an improvement in *structure and
+attribution*, and it does not, on its own, replace "the goldens change and a human reviews the diff"
+as the guarantee for the one distinction everything rests on. Anything stronger requires per-occurrence
+ground truth that is added deliberately, fixture by fixture.
+
+### Exemptions, and the rule that keeps one honest
+
+Exemptions are how an invariant rots into a formality, and three existing ones are too broad:
+`PAIRING_EXEMPT` skips a whole fixture on its label; `NO_ANSWER_EXPECTED` skips every view of
+`strands/error`; `KNOWN_DEFAULTED` lists carriers with no machine-checkable reason.
+
+The rule:
+
+> A legitimate exemption **proves that the invariant's antecedent is false in the source telemetry**. A
+> suppressed failure merely records that the implementation cannot currently satisfy it.
+
+So an exemption is an *exact expected limitation*, not a skipped assertion: it names the invariant, the
+producer and version, the exact fixture/view/span/carrier locator, the expected violating witnesses and
+their count, a source-level predicate showing the required evidence is absent, and the diagnostic the
+user must see. And it fails if an extra violation appears, if the expected violation **disappears**, if
+the raw source starts carrying the missing evidence, or if the diagnostic is gone.
+`REORDERS_UNDER_PER_CARRIER` already does the bidirectional half correctly — every listed entry must
+still occur, and a fixed one must be removed. The pairing and answer exemptions need the same.
+
 ## One fact, one job
 
 Revision 1's whole diagnosis was that `batch_time` did three jobs and one quality score did two. The
@@ -878,6 +1016,18 @@ where each step is worth doing even if the next never happens:
 | 4 | Move cross-carrier authority out of decoders (OpenInference enrichment, Claude Code suppression) | those are stage-4 and stage-6 decisions sitting in stage 2, and each is a place a fix has to be made twice |
 | 5 | Only then replace dedup and reconciliation — and only against a **reproducible** membership or ordering failure | the one case that motivated the rewrite was not reproducible; the next should be pinned by a fixture before any mechanism changes |
 
+**Landed already, and it changes the estimate.** The first carrier-*instance* claim is in
+(`1e623a45`): the generic answer carrier is admitted only on a **generation** span, decided by
+`detect_observation_type`, which is a pure function of the span name and attributes and is already
+computed before message extraction runs. Corpus-neutral, mutation-verified both ways — disabling it
+loses the answer on `_synthetic/dialect_question_generic_answer`, and dropping the observation-type
+guard reproduces the langgraph 12 → 28 expansion.
+
+The lesson for step 1: **span context is available at ingest for free.** So the persistence work is
+needed for *scope* and *raw carrier payloads* — the facts nothing derives — and not for span context,
+which narrows step 1 considerably and means claims keyed on operation and observation type can be built
+before any schema change.
+
 The target model below keeps its value as vocabulary and as the destination. What it does not have yet
 is a defect that only it can fix.
 
@@ -914,3 +1064,4 @@ reasoning is auditable rather than re-derived.
 | 4 | stages 1, 2, 7 and buildability | **the persistence boundary**, which revisions 1-3 omitted: stages 1-2 run at ingest and 3-7 at read, and the facts stage 3 needs are not persisted — the instrumentation scope is *never captured for spans at all* (`extract/mod.rs:335`; the `scope_name` columns are metrics-only), so a scope-keyed profile has no input at read time. That is an unmentioned persisted-format change, and it makes provenance capture step 1. Stage 1 became a **`CarrierBundle`**, since one emission is routinely spread over sibling attributes (tool name + call id + arguments; OpenInference's dotted keys plus `input.value`; Vercel's `ai.response.*`). Stage 2's restriction was too broad to be true and now separates *syntactic* identity and order (permitted) from *occurrence* identity and *global* order (not), naming the two decoders that violate it. Stage 7: `order_graph` is reusable as algorithms, **not** as a module — its evidence collection reads exactly the `BlockEntry` facts this design deletes, and **SCC condensation does not exist**, contrary to revision 1. Specified the two things that could still make two implementations return different *membership*: injectivity is **per bundle, not global** (two parent snapshots must both match one occurrence, or invariant 6 fails), and the objective is authority-first, then cardinality. Added the per-block winner policy. And, on the reviewer's recommendation, **the document now argues the case against itself** and recommends incremental adoption over a rewrite | `extract/mod.rs:335`, the metrics-only `scope_*` columns, `RawMessage { source, content }`; `messages.rs:896`/`:1071`/`:3767`; `order_graph.rs:105`/`:999` |
 | 5 | reliability and scale | **stage 4 as specified is factorial in the worst case** (`n!/(n-m)!` injective assignments; it bites on repeated identical content with no stable ids — the shape that made the existing cross-trace matcher need a budget). Added the whole operational contract that revisions 1-4 lacked: a matching budget mirroring `MATCH_BUDGET = 20_000` with forced unions outside the search, canonical witness-locator traversal, and exhaustion that keeps proven matches and **under-strips** rather than guessing; a batched graph merge, since per-merge recomputation is `O(M(V+E))`; the admission that input-linearity is **not knowable from this document** and needs a stage-4 benchmark before any promotion. **Statelessness restated set-wise** — "the provisional node's id is kept" described mutating state that does not persist, so an occurrence keeps every witness id as an alias with the primary chosen by locator order; and **evidence is not monotonic across reads**, because ClickHouse may have merged away the earlier version, so the merge algebra must be a pure function of the rows now present. Chose **build-time profiles**, since the reconstruction cache is keyed on rows alone and a runtime-editable profile set is exactly the stale-answer failure that key discipline exists to exclude. And **"self-scaling" is the wrong goal for this layer** — autoscaling cannot reduce one 68 MB reconstruction's latency; the six checkable properties replace it | `feed/mod.rs:353`/`:404`; `feed/cache.rs`'s row-only key and `every_field_of_a_row_reaches_the_digest`; ClickHouse's inability to express an as-of read |
 | 6 | framework independence | **the claim was not defensible and is now weakened to one that is**: framework identity is not required to decode and conservatively render *supported semconv* carriers, while producer scope and version remain correctness inputs for private dialects and for standard carriers whose occurrence semantics are locally ambiguous. "A conforming producer works automatically" is false — a producer emitting correct semconv **plus** its real answer in a private member (the CrewAI `raw` shape) leaves that answer opaque, because profiles may not read arbitrary payload. Counted the payoff instead of asserting it: 13 of 16 extractor families and ~10 attribute-recovery families are **irreducible** dialect adapters, so what the redesign removes is the **six framework-specific policy couplings**, now listed as the deliverable. Added the semconv-revision analysis — better at meaning changes, slightly *worse* at alias churn unless one canonical versioned compatibility module exists, which is not yet specified. And the ripple table gained a third row, measured in this cycle: the "obviously right" fix of letting the generic reader fill an empty side failed three ways, ending in langgraph 12 → 28 messages, because `output.value` means *answer* on a generation span and *node state* on a chain span | `attributes.rs`'s 28 recognition rules and its private usage-JSON readers; `messages.rs`'s 16 extractor families; measurement of `crewai/files`, `answer_beside_the_conversation`, `nested_state_messages` and the langgraph suite |
+| 7 | the invariant set | **the invariants are neither independent nor mostly testable, and the central one is not falsifiable.** Six pairs overlap (3↔9, 3↔12, 3↔5, 5↔12, 4↔6, 6↔7), and two entries are not invariants at all — claim conformance is an oracle requirement, profile permutation a determinism property. Nine have **no test**, five only weaker approximations, one is genuinely covered; `feed/props.rs` cannot generate a single shape the model needs. Six *kept* invariants would falsely accuse a legitimate corpus shape (retried calls, ordered restatement evidence refining order, branch interleavings no producer can serialise, unanswered calls in error turns, the feed's deliberate newest-first order, provably-distinct identical creations). Added the missing invariant — **distinct creation witnesses are never contracted** without independent identity evidence — with the five-case discrimination its test needs, and the admission that it catches a wrong *assembler* and not a wrong *profile*, for which ground truth is not constructible from telemetry that carries no occurrence marker. Restored the answer invariant the list had dropped, in the form that does not falsely accuse (`a turn with explicit completion evidence has an answer`). And a rule for exemptions: a legitimate one **proves the antecedent is false in the source**, and fails when the violation *disappears* | `feed/props.rs`'s generator; `carrier_semantics_are_declared` (blind to a dropped carrier); `reading_more_carriers_only_adds_messages` (rendered output, not decoder output); `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED`; `REORDERS_UNDER_PER_CARRIER` as the pattern to copy |
