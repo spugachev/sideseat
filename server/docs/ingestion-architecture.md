@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 10. Revision log at the end.
+**Status**: design, under review. Revision 11. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -379,6 +379,7 @@ rolling-deploy window is the same one any behaviour change already has.
 
 ```
 raw carrier instances
+   → [ persisted; re-read per request - see the read projection, stage 0R ]
    → syntax decoding            (payload shape → observations)
    → typed evidence claims      (what this instance is evidence of)
    → occurrences + causal relation
@@ -821,6 +822,99 @@ real evidence of contradiction and the current behaviour reports nothing.
 
 Span views are **observation** views — "what this span carried". Trace, session and feed views are
 **occurrence** projections. Different questions; no shared hidden history filter.
+
+## Stage 0R: the read projection, because stage 8 cannot build what was never loaded
+
+Revision 10 specified envelopes — model, parameters, response id, tools — and assigned **no stage the
+job of hydrating them from storage.** That is review 4's persistence finding repeated one layer later:
+a stage describing an output that cannot be constructed from its input.
+
+So the read path is its own stage, and it sits before reconstruction rather than inside stage 8:
+
+```text
+stored span rows
+   → read projection / hydration contract      (what stages 3-7 are allowed to know)
+   → reconstruction stages
+   → stage 8 output projection                 (what a caller sees)
+```
+
+The split matters because hydration decides three things at once — what the pipeline can know, how wide
+the query is, and what enters the cache key — and it is independently testable across both analytics
+backends. Stage 8 should decide what callers see; it must not silently also decide what the pipeline was
+allowed to load.
+
+### The audit: persisted, loaded, reachable
+
+`MessageSpanRow` is a 21-column projection, and the store is far wider. Taking only the facts a
+*debugging* user needs:
+
+| Fact | Persisted | Loaded by the message projection | Reachable from a message endpoint |
+| --- | --- | --- | --- |
+| requested model, provider, status, total tokens, total cost | yes | yes | direct |
+| **input / output tokens** | yes | **yes** | **no** — the DTO carries one `tokens` field and the metadata one total |
+| **span start and end** | yes | **yes** | only one derived block timestamp |
+| **exception type / message / stacktrace** | yes | **yes** | only synthesised leaf-error text; parent errors are suppressed |
+| response model, operation name, provider response id, temperature/top-p/top-k/max tokens, penalties, stop sequences | yes | no | `raw_span` on a *different* endpoint |
+| span-level finish reasons, cache and reasoning tokens, the cost split, framework, duration, span name/kind, user, environment | yes | no | a second request, joined on `(trace_id, span_id)` |
+| **instrumentation scope name and version** | **no** | no | **nowhere** — extraction ignores `scope_spans.scope` |
+
+The first three rows are the indefensible ones: the bytes are already in hand, so omitting them saves no
+database bandwidth. A user currently cannot answer "same prompt and model — did the temperature differ?",
+cannot correlate a failure with provider logs by response id, and cannot distinguish an exception type
+from its message without issuing a second request and re-deriving both.
+
+There is a subtler trap: model, provider, status and observation type are attached only to **returned
+blocks**, so a message-less generation span can move the entity totals while exposing no envelope at all.
+
+### `include_raw_span` does not close it
+
+It is not accepted on the message endpoints at all — only on span, trace and span-feed routes. Even
+where it is available, a caller could re-derive parameters and finish reasons only by issuing another
+request, joining spans to blocks, **reimplementing the server's dialect-specific fallback chains**, and
+reimplementing enrichment such as the corrected token total, which deliberately differs from the raw
+provider value. And it can never recover the instrumentation scope, which was never archived.
+
+As a heavy debugging hatch that is coherent. As the implementation of stage 8 it is an admission: a
+mandatory envelope field must not require the client to become a second ingestion implementation.
+
+### The four views do not report the same totals
+
+The blocks are structurally consistent — all four go through one `BlockDto` conversion — but the
+envelopes around them are not, and the totals mean four different things:
+
+| View | Totals come from |
+| --- | --- |
+| span | the pipeline's sum over that span row |
+| trace | the **trace entity**, overriding the pipeline |
+| session | the **session entity**, overriding the pipeline |
+| feed | the **page's own rows**, summed *after* `MESSAGE_CONTENT_FILTER` |
+
+The feed's figure is therefore neither the spend for the blocks returned, nor for the traces
+represented, nor all spend for the page's activity — it is "spend on message-query-eligible spans of
+this page", which is a fourth thing and should be named as one. The field names also differ (`messages`
+vs `data`, `total_messages` vs `message_count`) while both count *blocks* rather than provider messages.
+
+And block-level `tokens` and `cost` are the containing span's totals **copied onto every block**, so a
+client that sums them multiplies. Names that invite the wrong operation are a defect in the contract,
+not a caveat for documentation.
+
+### What widening costs, and what the cache says about it
+
+Recommendation: load a **compact envelope in the same message query** — operation, models, response id,
+parameters, raw and normalised finish reasons, framework, the usage and cost breakdown, and the exact
+error fields — as one envelope per span rather than repeated per block. Do not join `otel_spans` to
+itself; the facts are already on the selected row. Keep `raw_span` and provider bodies lazy and
+referenced.
+
+The cost is `additional bytes / 27 MB/s` on the cold path, and compact scalars are negligible beside
+replayed message payloads. The alternative — a second session-sized request — roughly doubles the
+measured p50 (23.5 ms → ~47 ms on DuckDB, 357 ms → ~715 ms on ClickHouse) *and* introduces a
+snapshot-consistency problem between the two reads.
+
+The reconstruction cache settles the design question rather than complicating it. It digests **every**
+field of `MessageSpanRow`, enforced structurally, so: adding a field that affects the answer is
+**required** — otherwise a changed parameter would serve a stale envelope under an unchanged key — and
+adding an irrelevant field is a pure cost, because it causes misses that change nothing.
 
 ## Stage 8: the output contract
 
@@ -1523,3 +1617,4 @@ reasoning is auditable rather than re-derived.
 | 8 | the verification apparatus | Constructive rather than critical: specified what to build. **Do not extend the row fuzzer** - it cannot reach one shape the model needs. A scenario generator derives *both* the oracle and the telemetry from a `SourceProgram`, so ground truth comes from the action taken rather than from any reading of the output; shrinking is over the program, under a contract that forbids a shrink from turning "fresh witness" into "re-delivery". Specified the five-case contraction test over **occurrence equivalence classes** (and corrected revision 7: contraction on stable identity must be *required*, or an assembler that ignores it passes), seven metamorphic transformations with what each may and may not change, five mutation controls named per seam, and the dependency order - a test that cannot fail today is worthless as a gate on tomorrow's change. Also: `reading_more_carriers_only_adds_messages` is **not** a decoder-locality test, since it compares rendered output. And the answer on falsifiability without annotation: no for arbitrary telemetry, but **yes** for controlled captures with a machine-generated manifest - drive each real SDK from a generated program against deterministic fake models, recording actions against live span contexts out of band | `feed/props.rs`; `REORDERS_UNDER_PER_CARRIER` as the bidirectional pattern; `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED` as the three that skip instead of proving |
 | 9 | the ordering layer | **`order_graph` is not the ordering layer** - the project feed re-sorts its output with a second scalar tuple, which revision 8 had assumed away and which explains the failed repair exactly (15 feed views moved because the feed's own sort saw the altered time; the trace views were decided by a tie the span term broke). Specified the framing edge's scope as one **generation invocation's input envelope**, with four committed fixtures falsifying every wider scope (`adk/image_gen`'s second instruction at index 9, `adk/reasoning`'s three request boundaries, `anthropic/session`'s changed instructions, and ADK's already-correct single carrier), and established that `Frame` **cannot** mean `role == System`, since `developer` normalises to it and an in-band system message is a turn in its array. Checked whether framing generalises: **it does not** - tool definitions are not messages, RAG context is causal, thinking is cohesion; there is no corpus basis for any other new edge class, and generic role ranks stay forbidden. Edges attach to **no** surviving copy: derived from every pre-dedup observation and mapped through lineage, or a quality tie decides which request gets the edge and `which_copy_survives_does_not_change_the_order` breaks. Reassigned every term of the sort key to its end state, with the whole tuple surviving transitionally as one opaque `legacy_rank`. Recommendation adopted: fix the defect now, in two increments, the first being provably-neutral plumbing that makes the resolver authoritative | measured: 27 trace views across 22 fixtures, every one `system@1 user@0`, now pinned bidirectionally by `a_system_instruction_precedes_the_first_user_turn` (which found `strands/swarm`, a fixture the `tool_use` survey had missed) |
 | 10 | the destination type model | Added **stage 8, the output contract**, which the design did not have - and the gap was a contradiction rather than an omission: the invariants promise honest ambiguity, representation completeness and evidence accounting while the DTO exposes none of it, and an invariant the caller cannot observe is not a guarantee. Catalogued what the current shape loses, including that the API returns a **flat list of blocks under a field named `messages`** with `total_messages` counting blocks, so one provider message holding text and two images is indistinguishable from several messages; that an unknown role silently becomes `User`, turning a parse failure into a plausible false turn; that request parameters and the provider response id are extracted and persisted but **not loaded by the message projection**; that structured output's schema and mode are dropped when tool blocks are split, and the same logical structured output is `Json` for one framework and `ToolUse` for another with nothing recording the equivalence; that streaming's chunk count is recognised and discarded; and that `BlockEntry` carries provenance which `BlockDto` declines to send. Fixed three **live contract mismatches** in the hand-mirrored client types, each costing real information. Stated the scope decision the document owes: SideML is used as a canonical model and implemented as a presentation one, and must be declared as one or the other | verified: server `ToolResult.name` (Gemini/ADK identify a result only by name) absent from the client, `ToolUse.input` declared as an object where the server sends any JSON, `Unknown` missing its `raw` |
+| 11 | the read path | **Stage 8 specified an output that cannot be built from its input** - revision 10 named envelopes and gave no stage the job of hydrating them, which is review 4's persistence finding one layer later. Added **stage 0R, the read projection**, before reconstruction rather than inside stage 8, because hydration decides what stages 3-7 may know, how wide the query is, and what enters the cache key, and is independently testable per backend. Audited persisted vs loaded vs reachable: three facts are **already loaded and still unreachable** (input/output tokens, both span timestamps, the exact exception fields), so omitting them saves no bandwidth; a dozen more need a second request joined on `(trace_id, span_id)`; and the instrumentation scope is reachable nowhere because extraction ignores `scope_spans.scope`. `include_raw_span` is **not accepted on the message endpoints at all**, and even where it is, using it requires a client to reimplement the dialect fallback chains and the enrichment - so it is a debugging hatch, not a contract. The four views report **four different totals**, the feed's being 'spend on message-query-eligible spans of this page', which is none of the three things a caller might mean; and block-level `tokens`/`cost` are the span's totals copied per block, so the names invite a wrong sum. The cache settles the widening question: a field that affects the answer **must** be in the row or a changed parameter serves a stale envelope under an unchanged key | measured: a second session-sized request roughly doubles p50 (23.5 → ~47 ms DuckDB, 357 → ~715 ms ClickHouse) against `additional bytes / 27 MB/s` for same-query widening |
