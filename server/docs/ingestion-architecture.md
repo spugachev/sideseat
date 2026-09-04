@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: revision 13, after thirteen consecutive architecture reviews. Revision log at the end.
+**Status**: revision 14, after fourteen consecutive architecture reviews. **The deferred track is closed** — see "The gate, answered". Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span, trace,
 session and feed views return — **and**, because thirteen reviews established that the semantics cannot
@@ -25,14 +25,49 @@ different levels of authorisation and nothing else says which is which.
 | **Compact read envelope, stage 0R** | **approved** | build | — | the three already-loaded facts become reachable |
 | **Data classes and the `framework_config` rule** | **approved** | build | provenance | the sentinel-token test |
 | **Stage 8 / v2 output contract** | **separate project** | schema and read work | scope decision | v2 goldens |
-| **Profile language, global occurrence assembler, reconciliation rebuild** | **deferred** | shadow only | the stop/go gate below | a truth oracle *and* stage-4 candidate-count benchmarks |
+| **Profile language, global occurrence assembler, reconciliation rebuild** | **rejected** | none | — | the gate was tested and not met |
 
-**The stop/go gate for the deferred track**, stated once so it cannot drift: *a reproducible defect,
-pinned by a committed fixture, that the current pipeline plus a local carrier-instance rule cannot fix
-and the occurrence model can.* Thirteen reviews have not produced one. Two candidate defects were
-repaired locally instead (the observation-type gate, plain-text generic I/O), one motivating defect did
-not reproduce at all, and the one confirmed ordering defect — request framing — needs an edge in the
-existing resolver rather than a new model.
+## The gate, answered
+
+The stop/go gate was: *a reproducible defect, pinned by a committed fixture, that the current pipeline
+plus a local carrier-instance rule cannot fix and the occurrence model can.* Review 14 was spent trying
+to construct one from the 121 committed fixtures.
+
+**It could not be constructed, and the attempt found a real defect instead.**
+`openai-agents/image_gen` collapsed three separate `generate_image` failures into one exception — a
+genuine false equivalence, the hardest class this document names, hiding in committed data behind a
+golden that had recorded it as correct. Under the occurrence model it resolves cleanly: three creation
+witnesses, no stable identity connecting them, three occurrences. But **the local repair uses exactly the
+same information** — an exception is composed from its span's own fields, so the span belongs in its
+identity — and it is four lines. Fixed in `416e7599`; the trace now shows three calls, three exceptions
+and three results instead of three, one and three.
+
+The three cases the design calls undecidable do not rescue the track either, because the occurrence model
+*relabels* rather than decides them:
+
+| Case | Under the occurrence model |
+| --- | --- |
+| `gen_ai.assistant.message` on a generation span | decided only by a scope-and-version producer contract — which **is** a local carrier-instance rule |
+| the CrewAI `raw` shape | works only through a named dialect decoder; for an unknown producer it stays opaque under either architecture |
+| identical id-less repeats | already preserved within one atomic emission by position; across emissions the local witness repair covers it; inside an accumulated snapshot **neither** architecture can know |
+
+And the structural reason this keeps happening: profiles are *forbidden* from consulting other spans,
+content equality or trace-wide facts. So where a deciding fact is genuinely non-local, a profile cannot
+establish the claim either — assembly can only report the ambiguity. The global machinery adds
+provenance and formalism, not correctness that was otherwise unavailable.
+
+**So the profile language, the global occurrence assembler, the merge algebra, the reconciliation
+rebuild and occurrence-driven representative selection are rejected**, not deferred — a gate nobody can
+meet is worse than a decision, because it keeps unauthorised work looking imminent.
+
+What is retained from that design, on its own merits:
+
+- the **claim vocabulary and decision ledger** as an explanation of the local decisions that already
+  exist — documentation and diagnostics, not a new semantic engine;
+- the **`SourceProgram` truth generator, manifests and mutation controls** as verification
+  infrastructure, which is authorised step 1 and independent of any of it;
+- **narrow, versioned scope-keyed carrier-instance rules**, which is what every repair in this document
+  turned out to need.
 
 ## The decision
 
@@ -518,9 +553,11 @@ by the order they were registered.
 
 ### 3. Evidence claims
 
-> **Deferred track.** Stages 3-6 below are a designed, costed alternative behind the stop/go gate — not
-> authorised work. They are kept because the costing is the product of thirteen reviews and would
-> otherwise be re-derived. Read them as a candidate design.
+> **Rejected alternative.** Stages 3-6 below are a designed and costed model that was **tested against
+> its own gate in review 14 and rejected**: no defect in the 121-fixture corpus needs it, and every one
+> that looked structural was repaired by a local carrier-instance rule. Kept as the record of what was
+> examined and priced, so the next structural-looking defect starts from here instead of re-deriving it.
+> Nothing below is authorised work.
 
 **A claim attaches to an observation, not to a carrier instance.** Revision 1 put it on the
 instance and that was a cardinality error, refuted by a fixture already in the corpus.
@@ -1640,10 +1677,11 @@ it passes.
 | 5 | The compact read envelope; settle the v2 schema and keep v1 explicitly lossy | the three already-loaded facts become reachable |
 | 6 | The claim ledger and annotated claims, in shadow mode | a claim's provenance can be printed for every observation |
 | 7 | Move the two confirmed cross-carrier decisions out of decoders (OpenInference enrichment, Claude Code suppression) | no output change |
-| **8** | **Stop/go gate** | a reproducible committed defect that needs the occurrence model, **and** stage-4 candidate-count benchmarks inside budget |
-| 9 | Shadow assembler → membership switch → reconciliation → representative selection → occurrence-driven graph | one explainable delta per promotion |
-| 10 | v2 occurrence output, generated client types, v2 goldens; the v1 adapter stays byte-compatible | v1 unchanged for existing callers |
-| 11 | Switch views, delete the old heuristics, regenerate goldens **last** | zero unreviewed deltas |
+| 8 | The v2 output contract: generated client types and v2 goldens, the v1 adapter byte-compatible | v1 unchanged for existing callers |
+
+Steps 9-11 of the earlier plan — the shadow assembler, the membership switch, the reconciliation
+rebuild and the occurrence-driven graph — are **withdrawn**. The gate they waited on was tested in
+review 14 and could not be met; see "The gate, answered".
 
 "Resolver last" from review 8 means *occurrence-driven promotion* last — not the neutral authority
 plumbing in step 2, which everything else depends on.
@@ -1652,13 +1690,17 @@ plumbing in step 2, which everything else depends on.
 to a named claim, union, replay match or edge. "The corpus changed by 22 fixtures" is not evidence of
 correctness; "these three occurrences moved because these generation-dataflow edges became available" is.
 
-### What is deferred, and why it is kept
+### What is kept of the rejected design, and why
 
-The profile language, the global occurrence assembler, the merge algebra and the reconciliation rebuild
-remain fully designed in this document **and are not authorised**. Keeping the design is deliberate: the
-work of the last thirteen reviews is the costing, and discarding it would mean re-deriving it the next
-time a defect looks structural. But it is a candidate design behind an evidence gate, not a plan of
-record, and every section describing it should be read that way.
+The profile language, the global assembler, the merge algebra and the reconciliation rebuild remain
+described in this document as a **rejected alternative**. Keeping them is deliberate and cheap: fourteen
+reviews of costing is the expensive part, and the next time a defect looks structural the right first
+question is "is this the shape that was already examined and priced?" — which needs the design present
+to answer. Nothing in those sections is authorised work, and the stage-3 header says so.
+
+What crossed over into authorised work is smaller and more useful than the model itself: the claim
+vocabulary as diagnostics, the truth generator as verification, and the discovery that a
+*carrier-instance* rule — carrier plus span context — is what every repair actually needed.
 
 ## Revision log — history, not instructions
 
@@ -1682,3 +1724,4 @@ nothing here is a specification, and a row may describe a mechanism a later revi
 | 11 | the read path | **Stage 8 specified an output that cannot be built from its input** - revision 10 named envelopes and gave no stage the job of hydrating them, which is review 4's persistence finding one layer later. Added **stage 0R, the read projection**, before reconstruction rather than inside stage 8, because hydration decides what stages 3-7 may know, how wide the query is, and what enters the cache key, and is independently testable per backend. Audited persisted vs loaded vs reachable: three facts are **already loaded and still unreachable** (input/output tokens, both span timestamps, the exact exception fields), so omitting them saves no bandwidth; a dozen more need a second request joined on `(trace_id, span_id)`; and the instrumentation scope is reachable nowhere because extraction ignores `scope_spans.scope`. `include_raw_span` is **not accepted on the message endpoints at all**, and even where it is, using it requires a client to reimplement the dialect fallback chains and the enrichment - so it is a debugging hatch, not a contract. The four views report **four different totals**, the feed's being 'spend on message-query-eligible spans of this page', which is none of the three things a caller might mean; and block-level `tokens`/`cost` are the span's totals copied per block, so the names invite a wrong sum. The cache settles the widening question: a field that affects the answer **must** be in the row or a changed parameter serves a stale envelope under an unchanged key | measured: a second session-sized request roughly doubles p50 (23.5 → ~47 ms DuckDB, 357 → ~715 ms ClickHouse) against `additional bytes / 27 MB/s` for same-query widening |
 | 12 | data sensitivity | The corpus already contains the proof: `crewai/agent_core` is gitignored because CrewAI serialises its whole model configuration into a span attribute and the capture held live AWS credentials. **Corrected revision 11's claim that provenance persistence is "a pure addition"** - for the locator and the scope it is, for *lossless raw payloads* it is not: `raw_span` already holds a lossless copy, so persisting them again duplicates sensitive bytes and moves them from a debugging archive into the hot reconstruction contract, the cache key included. A carrier member therefore persists a **reference**, a digest and a data class rather than the bytes. Established the principled line, which is not "does this look like a secret" (a regex that misses the next format and corrupts a prompt discussing credentials) but **what kind of thing the value is** - and one rule follows: `framework_config` is **never a conversation occurrence**, which is exactly what the third ripple-table failure did to `crewai/files`. Enforceable *because* of "carrier instance, not carrier name", the same principle paying off a third time. Traced every copy a secret-bearing span makes today, documented the DuckDB/ClickHouse retention asymmetry (count-only by default versus a 90-day TTL), and specified the sentinel-token verification | verified: `build_raw_span_json` filters nothing; no redactor exists (the helper only recognises producer placeholders); the four message views never load `raw_span`; one trace-level log carries 100 characters of an unparseable value |
 | 13 | the document as one artefact | **Restructured rather than extended.** Twelve area reviews had accumulated 12 live contradictions, five incompatible plans, and sections that read as instructions for work nobody had authorised. Fixed: the opening claim "not how they are stored" was false and is gone; the stage diagram now separates the **stage** boundary from the **process** boundary (stages 1-2 at ingest, 0R hydrating the rest); `Unknown` had two incompatible meanings, now split into unknown *occurrence semantics* on decoded content versus an unknown *data class*, which is never promoted; the provisional merge was written as persistent mutation in a stateless system and is now **set-wise**, with the honest consequence that evidence can *shrink* between reads so "monotonic" was wrong; the invariant list and its own audit were both normative, and are replaced by **one corrected set of 14** with a column saying which have a test today (five do); idempotence and full stripping are now **conditioned on `reconciliation_complete`**, since a conservative budget deliberately under-strips; stable-identity contraction is scoped to *independent* observations, so two entries of one emission list are malformed evidence rather than contracted; build-time profiles no longer claim cross-replica determinism "for free"; and stage 8's no-erasure rule binds **v2 only**, since a byte-compatible v1 necessarily erases. Deleted as dead weight: "one fact, one job", "what survives and what goes", and a duplicated falsifiability section. Added **the status table** and **one plan** replacing five. And the verdict that matters: the case is stronger as a *diagnosis* and weaker as a *rewrite* - three bounded parts are authorised, the occurrence model is deferred behind a stated gate | the document's own measurements: the motivating defect did not reproduce, two candidate defects were repaired locally, and the normalisation layer reads no framework |
+| 14 | the stop/go gate | **The gate was tested and could not be met, so the deferred track is closed rather than left pending.** Review 14 spent its whole budget trying to construct a defect in the 121 committed fixtures that needs the occurrence model - and found a real defect instead: `openai-agents/image_gen` collapsed **three** separate `generate_image` failures into one exception, a genuine false equivalence hidden behind a golden that recorded it as correct. The occurrence model resolves it cleanly and the **local repair uses the same information in four lines** (`416e7599`), which is the gate's answer in miniature. The three cases the document calls undecidable turn out to be *relabelled* rather than decided: the choiceless-output case is settled by a scope contract, which **is** a local carrier-instance rule; the CrewAI `raw` shape needs a named decoder either way; identical id-less repeats inside an accumulated snapshot are unknowable to both. And the structural reason - profiles may not consult another span, content equality or trace-wide facts, so where the deciding fact is non-local a profile cannot establish the claim either. Rejected: the profile language, the global assembler, the merge algebra, the reconciliation rebuild, occurrence-driven representative selection, and plan steps 9-11. Retained on their own merits: the claim vocabulary as diagnostics, the truth generator as verification, and narrow scope-keyed carrier-instance rules | `openai-agents/image_gen` before and after: three calls, **one** explanation, three results → three, three, three |
