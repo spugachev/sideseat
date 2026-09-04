@@ -52,6 +52,7 @@ use chrono::{DateTime, Utc};
 
 use super::super::provenance::PositionPath;
 use super::types::BlockEntry;
+use crate::data::types::MessageCategory;
 use crate::domain::sideml::types::{ChatRole, ContentBlock};
 
 // ============================================================================
@@ -136,6 +137,32 @@ impl MessageIdentity {
             return Self::ToolResult {
                 trace_id: block.trace_id.clone(),
                 identity_hash,
+            };
+        }
+
+        // An exception is a fact *about a span*, so two spans' exceptions are two occurrences.
+        //
+        // This block is not read out of a payload at all - it is composed from the span's own
+        // `exception_*` fields (`compose_error_text`), which is why its identity may safely carry the
+        // span: there is no history re-send of a span's exception to collapse against, and a
+        // re-delivered span keeps its span id, so re-delivery still collapses.
+        //
+        // Without it, `openai-agents/image_gen` reported **one** error where three separate
+        // `generate_image` executions had each failed with the same message: the three tool results
+        // survived, the three exceptions became one, and the trace showed three failures and one
+        // explanation. The goldens had recorded that as correct, and `assert_no_duplicates` would have
+        // reported the repair as a defect - which is exactly the false-equivalence shape the design
+        // record calls the hardest to detect, found here in committed data.
+        if block.category == MessageCategory::Exception {
+            return Self::Regular {
+                trace_id: block.trace_id.clone(),
+                role: block.role,
+                semantic_hash: {
+                    let mut hasher = DefaultHasher::new();
+                    block.span_id.hash(&mut hasher);
+                    block.content_hash.hash(&mut hasher);
+                    hasher.finish()
+                },
             };
         }
 

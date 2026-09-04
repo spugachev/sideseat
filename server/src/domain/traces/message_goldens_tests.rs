@@ -714,11 +714,26 @@ fn build_golden(label: &str, paths: &[PathBuf], rows: &[(String, MessageSpanRow)
 /// history re-send takes. If the pipeline ever learns to keep id-less repeats, this check has to
 /// learn it at the same time, or it will report the improvement as a defect.
 fn assert_no_duplicates(label: &str, view_name: &str, rows: &[InvariantRow]) {
-    let mut seen: HashMap<(&str, &str, &str, &str), usize> = HashMap::new();
+    let mut seen: HashMap<(&str, &str, &str, &str, &str), usize> = HashMap::new();
     for r in rows {
+        // An exception is a fact about a *span*, and it is composed from that span's own
+        // `exception_*` fields rather than read from a payload - so two spans reporting the same
+        // failure are two failures, not a re-send. `openai-agents/image_gen` is the case: three
+        // `generate_image` executions each failed with the same message, and collapsing them showed
+        // three tool results beside one explanation.
+        //
+        // This is the amendment the check's own doc comment anticipated: the pipeline learned to keep a
+        // repeat that has no id, so the invariant had to learn it in the same change, or it reports the
+        // repair as the defect.
+        let scope = if r.carrier == "attr:exception" {
+            r.span_id.as_str()
+        } else {
+            ""
+        };
         *seen
             .entry((
                 r.trace_id.as_str(),
+                scope,
                 r.role.as_str(),
                 r.entry_type.as_str(),
                 r.content_digest.as_str(),
@@ -728,7 +743,7 @@ fn assert_no_duplicates(label: &str, view_name: &str, rows: &[InvariantRow]) {
     let mut dupes: Vec<String> = seen
         .iter()
         .filter(|(_, n)| **n > 1)
-        .map(|((trace, role, kind, content), n)| {
+        .map(|((trace, _scope, role, kind, content), n)| {
             let head: String = content.chars().take(70).collect();
             format!(
                 "{n}x in trace {} [{role}/{kind}] {head}",

@@ -1020,16 +1020,26 @@ pub(super) fn resolve(
         }
     }
 
+    // Cycles released to keep the resolve total. A cycle means the *evidence* contradicts itself, which
+    // is a fact about the telemetry or about a constraint class, and it used to be resolved in silence -
+    // so nothing distinguished "the order is derived" from "the order is a deterministic guess after a
+    // contradiction". Counted here and reported once below, rather than per release, because one
+    // contradiction commonly strands several units.
+    let mut cycles_broken = 0usize;
+
     while order.len() < nodes.len() {
         let next_entry = match ready.iter().next().copied() {
             Some(entry) => entry,
             // A cycle: the evidence contradicts itself. Release the smallest-key remaining unit so the
             // result is still a total order.
-            None => remaining
-                .iter()
-                .next()
-                .copied()
-                .expect("a node remains while the order is incomplete"),
+            None => {
+                cycles_broken += 1;
+                remaining
+                    .iter()
+                    .next()
+                    .copied()
+                    .expect("a node remains while the order is incomplete")
+            }
         };
         ready.remove(&next_entry);
         remaining.remove(&next_entry);
@@ -1046,6 +1056,17 @@ pub(super) fn resolve(
                 }
             }
         }
+    }
+
+    if cycles_broken > 0 {
+        tracing::warn!(
+            cycles_broken,
+            units = units.len(),
+            blocks = n,
+            trace_id = survivors.first().map(|b| b.trace_id.as_str()),
+            "ordering evidence contradicts itself; released units deterministically to keep the order \
+             total - the result is a consistent guess rather than a derived order"
+        );
     }
 
     // Emit each unit's members, ordered by the emissions' own adjacency.
@@ -1143,4 +1164,114 @@ fn order_within_unit(members: &[usize], intra_edges: &[(usize, usize)]) -> Vec<u
         }
     }
     out
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+    use crate::data::types::MessageCategory;
+    use crate::domain::sideml::provenance::PositionPath;
+    use crate::domain::sideml::types::{ChatRole, ContentBlock};
+    use chrono::TimeZone;
+
+    fn block(span: &str, text: &str) -> BlockEntry {
+        BlockEntry {
+            position: PositionPath::default(),
+            entry_type: "text".to_string(),
+            content: ContentBlock::Text {
+                text: text.to_string(),
+            },
+            role: ChatRole::User,
+            trace_id: "trace-1".to_string(),
+            span_id: span.to_string(),
+            session_id: None,
+            message_index: 0,
+            entry_index: 0,
+            parent_span_id: None,
+            span_path: vec![span.to_string()],
+            timestamp: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            order_time: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            observation_type: None,
+            model: None,
+            provider: None,
+            name: None,
+            finish_reason: None,
+            tool_use_id: None,
+            tool_name: None,
+            tokens: None,
+            cost: None,
+            status_code: None,
+            is_error: false,
+            source_type: "attribute".to_string(),
+            event_name: None,
+            source_attribute: Some("carrier".to_string()),
+            category: MessageCategory::GenAIUserMessage,
+            content_hash: text.to_string(),
+            is_semantic: true,
+            uses_span_end: false,
+            is_history: false,
+            tool_use_id_correlated: false,
+            promoted_to_span_output: false,
+        }
+    }
+
+    fn evidence(carrier: usize, position: i32) -> OrderEvidence {
+        OrderEvidence {
+            emission: None,
+            message_index: position,
+            entry_index: 0,
+            effective: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            credible: false,
+            span: 0,
+            carrier,
+            carrier_ordered: true,
+            is_output: false,
+            from_generation: false,
+        }
+    }
+
+    /// Contradictory evidence still yields every block exactly once.
+    ///
+    /// Two carriers state opposite orders for the same pair - carrier 0 says `a` then `b`, carrier 1
+    /// says `b` then `a` - which is a genuine contradiction in the telemetry and the only way the
+    /// resolver's stall branch is reached. That branch had **never executed in the test suite**: no
+    /// corpus fixture cycles at this constraint density, so the one path whose job is to keep a
+    /// contradiction from becoming a lost message was unverified.
+    ///
+    /// What is asserted is the property that must survive a contradiction: the answer is still a total
+    /// order over exactly the survivors. Which of the two wins is deliberately not asserted - it is a
+    /// deterministic tie-break over a contradiction, not a fact about the conversation.
+    #[test]
+    fn contradictory_evidence_still_returns_every_block_exactly_once() {
+        let survivors = vec![block("span-a", "a"), block("span-b", "b")];
+        // Four observations: carrier 0 orders (a, b), carrier 1 orders (b, a).
+        let evidence_set = vec![
+            evidence(0, 0),
+            evidence(0, 1),
+            evidence(1, 0),
+            evidence(1, 1),
+        ];
+        let lineage = vec![Some(0), Some(1), Some(1), Some(0)];
+
+        let resolved = resolve(
+            &evidence_set,
+            &survivors,
+            &lineage,
+            &HashMap::new(),
+            Constraints::PRODUCTION,
+        );
+
+        assert_eq!(
+            resolved.len(),
+            survivors.len(),
+            "a contradiction must not drop or duplicate a block"
+        );
+        let mut seen: Vec<&str> = resolved.iter().map(|b| b.span_id.as_str()).collect();
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            vec!["span-a", "span-b"],
+            "every survivor appears exactly once"
+        );
+    }
 }
