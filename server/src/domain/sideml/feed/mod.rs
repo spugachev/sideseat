@@ -1343,6 +1343,33 @@ pub fn process_feed(rows: Vec<MessageSpanRow>, options: &FeedOptions) -> FeedRes
     )
 }
 
+// Every position where the resolver-authoritative projection differs from the feed's scalar sort.
+//
+// A *complete* inventory, not the first difference: measuring only the first understated the delta as
+// five fixtures when it is eight feed views, and missed a whole category (same type, different content).
+// A gate stated from an incomplete measurement is worse than none, because "one more is a regression"
+// then rests on a number that was never the real one.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FEED_PROJECTION_DELTA: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The projection a resolver-authoritative feed would use: keep the order it was handed, group by
+/// response *identity*, order groups newest-first, preserve each group's internal order.
+#[cfg(test)]
+fn shadow_feed_newest_first(blocks: &[BlockEntry]) -> Vec<BlockEntry> {
+    let mut groups: std::collections::BTreeMap<(DateTime<Utc>, String), Vec<BlockEntry>> =
+        std::collections::BTreeMap::new();
+    for block in blocks {
+        groups
+            .entry((block.order_time, block.trace_id.clone()))
+            .or_default()
+            .push(block.clone());
+    }
+    groups.into_values().rev().flatten().collect()
+}
+
 /// Order a project feed newest-first: **responses** descending, each response forward inside.
 ///
 /// The feed is the one view that is not chronological, and that is a statement about *responses*, not
@@ -1363,6 +1390,8 @@ pub fn process_feed(rows: Vec<MessageSpanRow>, options: &FeedOptions) -> FeedRes
 /// previous explicit key was written to fix, where two blocks in different traces sharing a span id
 /// and a time compared equal and their order followed HashMap iteration.
 fn sort_feed_newest_first(blocks: Vec<BlockEntry>) -> Vec<BlockEntry> {
+    #[cfg(test)]
+    let shadow = shadow_feed_newest_first(&blocks);
     // The chronological order first, exactly as a trace view would build it, so each response's
     // internal order is the reconstructed one.
     let positions = feed_positions(&blocks, |i| blocks[i].order_time);
@@ -1397,7 +1426,41 @@ fn sort_feed_newest_first(blocks: Vec<BlockEntry>) -> Vec<BlockEntry> {
         }
     }
     responses.reverse();
-    responses.into_iter().flatten().collect()
+    let out: Vec<BlockEntry> = responses.into_iter().flatten().collect();
+
+    #[cfg(test)]
+    {
+        let identity = |b: &BlockEntry| {
+            format!(
+                "{}/{}/{}/{}/{}#{}",
+                &b.trace_id[..b.trace_id.len().min(8)],
+                &b.span_id[..b.span_id.len().min(8)],
+                b.message_index,
+                b.entry_index,
+                b.entry_type,
+                &b.content_hash[..b.content_hash.len().min(8)]
+            )
+        };
+        for (i, (a, b)) in shadow.iter().zip(&out).enumerate() {
+            if identity(a) != identity(b) {
+                FEED_PROJECTION_DELTA.with(|d| {
+                    d.borrow_mut().push(format!(
+                        "[{i}] resolver={} scalar={}",
+                        identity(a),
+                        identity(b)
+                    ))
+                });
+            }
+        }
+        if shadow.len() != out.len() {
+            FEED_PROJECTION_DELTA.with(|d| {
+                d.borrow_mut()
+                    .push(format!("length {} vs {}", shadow.len(), out.len()))
+            });
+        }
+    }
+
+    out
 }
 
 /// Keep only the blocks inside a requested time window.

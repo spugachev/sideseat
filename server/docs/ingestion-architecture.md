@@ -163,7 +163,7 @@ observation type — a carrier *instance*, which is this document's whole princi
 to be free: `detect_observation_type` is a pure function of the span name and attributes, already
 computed for every span before message extraction runs. Admitting the generic answer carrier only on a
 generation span, and only when nothing already accounts for the span's output, is corpus-neutral across
-all 121 fixtures and repairs the shape (`1e623a45`,
+all 119 committed fixtures and repairs the shape (`1e623a45`,
 `_synthetic/dialect_question_generic_answer`). Mutation-verified in both directions: disabling the
 block loses the answer, and dropping the observation-type guard reproduces the langgraph expansion.
 
@@ -397,7 +397,7 @@ ripple table nor the invariant audit had produced.
 The `openai-agents/image_gen` defect was found by comparing **span views against the trace view** —
 content present per span that vanishes at trace level. That comparison targets false equivalence
 directly, which is the class this document calls hardest to detect, and it had never been run
-systematically. Run over all 121 fixtures:
+systematically. Run over all 119 committed fixtures:
 
 **787 groups** appear on N spans and fewer than N times in their trace. Almost all are the product
 working: `langgraph/swarm` sends one user question to 135 generation spans, and collapsing that to one
@@ -615,7 +615,7 @@ by the order they were registered.
 ### 3. Evidence claims
 
 > **Rejected alternative.** Stages 3-6 below are a designed and costed model that was **tested against
-> its own gate in review 14 and rejected**: no defect in the 121-fixture corpus needs it, and every one
+> its own gate in review 14 and rejected**: no defect in the 119-fixture corpus needs it, and every one
 > that looked structural was repaired by a local carrier-instance rule. Kept as the record of what was
 > examined and priced, so the next structural-looking defect starts from here instead of re-deriving it.
 > Nothing below is authorised work.
@@ -1730,7 +1730,9 @@ second scalar tuple (`(order_time, span, message_index, entry_index, after_call,
 reverses response runs. So "make the resolver authoritative" is a behaviour change, and the question is
 how big.
 
-Measured by computing the resolver-authoritative projection beside the current one for every fixture —
+Measured by computing the resolver-authoritative projection beside the current one for every fixture *a
+checkout has locally* — 121, two more than the 119 committed, since `strands-js/image-gen` and
+`vercel-ai-js/image-gen` are gitignored for size and one of them is among the disagreements —
 group by response *identity* rather than adjacent runs, reverse the groups, preserve the order within
 each — and comparing fingerprints. **Eight unique disagreements across five fixtures**, of two kinds:
 
