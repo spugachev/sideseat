@@ -3442,3 +3442,160 @@ fn local_only_samples_are_actually_gitignored() {
         );
     }
 }
+
+/// Every span-reported exception reaches the trace, and independent reports keep their multiplicity.
+///
+/// This is the check that the five defects of reviews 14-16 would have failed, and none of the existing
+/// invariants could: a false equivalence *removes* an occurrence, and `assert_no_duplicates` only rejects
+/// duplicate survivors, so all five passed it vacuously.
+///
+/// Two parts, because they catch different failures:
+///
+/// - **at least one survives**: `strands/error` rendered *no* error at all, because a parent deferred to
+///   an ERROR-status child with nothing to report. The antecedent is source-backed - a span view holding
+///   an `attr:exception` block means a row had renderable exception fields - so this cannot accuse a
+///   trace whose ERROR status carried no detail;
+/// - **independent reports keep their count**: `openai-agents/image_gen` reported three separate
+///   `generate_image` failures as one. Where several *distinct spans* each report the same text, the
+///   surviving set must be the reporting set.
+///
+/// Deliberately not "every span exception has a trace representative": that flags the 18 legitimately
+/// suppressed parent copies across ten fixtures, since an ancestor re-reports its descendant's failure.
+/// Telling that suppression from a false equivalence needs `parent_span_id`, which `InvariantRow` does
+/// not carry - so the check is stated over what the harness can actually prove.
+fn exception_conservation_violations(built: &Built) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, scope, trace_rows) in &built.invariants {
+        let Scope::Trace { trace_id } = scope else {
+            continue;
+        };
+        // Which spans of this trace reported which exception text.
+        let mut reported: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+        for (other_name, other_scope, rows) in &built.invariants {
+            let Scope::Span {
+                trace_id: span_trace,
+                span_id,
+            } = other_scope
+            else {
+                continue;
+            };
+            if span_trace != trace_id {
+                continue;
+            }
+            let _ = other_name;
+            for r in rows.iter().filter(|r| r.carrier == "attr:exception") {
+                reported
+                    .entry(r.content_digest.as_str())
+                    .or_default()
+                    .insert(span_id.as_str());
+            }
+        }
+        if reported.is_empty() {
+            continue;
+        }
+
+        let survivors: HashMap<&str, BTreeSet<&str>> = trace_rows.iter().fold(
+            HashMap::new(),
+            |mut acc: HashMap<&str, BTreeSet<&str>>, r| {
+                acc.entry(r.content_digest.as_str())
+                    .or_default()
+                    .insert(r.span_id.as_str());
+                acc
+            },
+        );
+
+        if !reported.keys().any(|d| survivors.contains_key(d)) {
+            out.push(format!(
+                "{name}: {} exception(s) reported by spans, none in the trace view",
+                reported.len()
+            ));
+        }
+        for (digest, spans) in &reported {
+            if spans.len() < 2 {
+                continue;
+            }
+            let kept = survivors.get(digest).cloned().unwrap_or_default();
+            if kept.len() < spans.len() {
+                out.push(format!(
+                    "{name}: an exception reported independently by {} spans survives on {} - \
+                     distinct failures must keep their multiplicity",
+                    spans.len(),
+                    kept.len()
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// A single-trace fixture whose spans carried a user turn shows one.
+///
+/// Narrower than the framing ratchet above and aimed at a different failure: not *where* the turn sits
+/// but whether it survives at all. `strands-js/swarm` lost its request to two history phases with no
+/// copy left to carry it, and nothing objected.
+///
+/// Restricted to single-trace fixtures because a later trace in a session may legitimately have its turn
+/// stripped as a replay of an earlier one - `langgraph/tool_use` trace-4 is exactly that, and without the
+/// restriction this would accuse it.
+fn lost_user_turn_violations(built: &Built) -> Vec<String> {
+    let traces: BTreeSet<&str> = built
+        .invariants
+        .iter()
+        .filter_map(|(_, scope, _)| match scope {
+            Scope::Trace { trace_id } => Some(trace_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    if traces.len() != 1 {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for (name, scope, trace_rows) in &built.invariants {
+        let Scope::Trace { trace_id } = scope else {
+            continue;
+        };
+        if trace_rows.is_empty() || trace_rows.iter().any(|r| r.role == "user") {
+            continue;
+        }
+        let carried = built.invariants.iter().any(|(_, s, rows)| {
+            matches!(s, Scope::Span { trace_id: t, .. } if t == trace_id)
+                && rows.iter().any(|r| r.role == "user")
+        });
+        if carried {
+            out.push(format!(
+                "{name}: no user turn, although a span of this single-trace fixture carried one"
+            ));
+        }
+    }
+    out
+}
+
+/// Both conservation checks, over the whole corpus, with no exemptions.
+#[test]
+fn a_reported_occurrence_reaches_the_trace() {
+    let fixtures = discover_fixtures();
+    if fixtures.is_empty() {
+        eprintln!("conservation: no fixtures - skipping");
+        return;
+    }
+
+    let pricing = PricingService::init_for_test().expect("offline pricing service");
+    let mut violations: Vec<String> = Vec::new();
+    for (label, paths) in &fixtures {
+        let rows = rows_for_mode(&pricing, paths, ExtractionMode::PerCarrier);
+        let built = build_golden(label, paths, &rows);
+        for v in exception_conservation_violations(&built) {
+            violations.push(format!("{label} / {v}"));
+        }
+        for v in lost_user_turn_violations(&built) {
+            violations.push(format!("{label} / {v}"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "content a span reported did not reach its trace:\n  {}",
+        violations.join("\n  ")
+    );
+}
