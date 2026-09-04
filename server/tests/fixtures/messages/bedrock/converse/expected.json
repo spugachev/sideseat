@@ -564,8 +564,8 @@
   "feed_view": {
     "message_count": 19,
     "role_sequence": [
-      "assistant",
       "tool",
+      "assistant",
       "assistant",
       "system",
       "user",
@@ -589,19 +589,19 @@
     "messages": [
       {
         "index": 0,
+        "role": "tool",
+        "entry_type": "tool_result",
+        "content": "{\"type\":\"tool_result\",\"tool_use_id\":\"tooluse_53aofuHZ1Ly5eZtPSkn2l6\",\"content\":[{\"type\":\"text\",\"text\":\"Sunny, 22°C, light breeze\"}]}",
+        "content_digest": "d2ec42da18419416",
+        "observation_type": "generation"
+      },
+      {
+        "index": 1,
         "role": "assistant",
         "entry_type": "text",
         "content": "The weather in Paris is currently **sunny** with a temperature of **22°C (about 72°F)** and a **light breeze**. It's a nice day! 🌞",
         "content_digest": "09076c6e34c39888",
         "finish_reason": "Stop",
-        "observation_type": "generation"
-      },
-      {
-        "index": 1,
-        "role": "tool",
-        "entry_type": "tool_result",
-        "content": "{\"type\":\"tool_result\",\"tool_use_id\":\"tooluse_53aofuHZ1Ly5eZtPSkn2l6\",\"content\":[{\"type\":\"text\",\"text\":\"Sunny, 22°C, light breeze\"}]}",
-        "content_digest": "d2ec42da18419416",
         "observation_type": "generation"
       },
       {

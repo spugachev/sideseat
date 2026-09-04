@@ -143,7 +143,7 @@ mod order_graph;
 mod props;
 mod types;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value as JsonValue, json};
@@ -157,8 +157,7 @@ use crate::domain::traces::{MessageSource, RawMessage};
 
 use classify::uses_span_end;
 use dedup::{
-    FeedPosition, SpanTimestamps, feed_positions, hash_json_into, hash_structured_json_into,
-    hash_tool_result_content_into,
+    SpanTimestamps, hash_json_into, hash_structured_json_into, hash_tool_result_content_into,
 };
 use history::mark_history;
 
@@ -1343,33 +1342,6 @@ pub fn process_feed(rows: Vec<MessageSpanRow>, options: &FeedOptions) -> FeedRes
     )
 }
 
-// Every position where the resolver-authoritative projection differs from the feed's scalar sort.
-//
-// A *complete* inventory, not the first difference: measuring only the first understated the delta as
-// five fixtures when it is eight feed views, and missed a whole category (same type, different content).
-// A gate stated from an incomplete measurement is worse than none, because "one more is a regression"
-// then rests on a number that was never the real one.
-#[cfg(test)]
-thread_local! {
-    pub(crate) static FEED_PROJECTION_DELTA: std::cell::RefCell<Vec<String>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// The projection a resolver-authoritative feed would use: keep the order it was handed, group by
-/// response *identity*, order groups newest-first, preserve each group's internal order.
-#[cfg(test)]
-fn shadow_feed_newest_first(blocks: &[BlockEntry]) -> Vec<BlockEntry> {
-    let mut groups: std::collections::BTreeMap<(DateTime<Utc>, String), Vec<BlockEntry>> =
-        std::collections::BTreeMap::new();
-    for block in blocks {
-        groups
-            .entry((block.order_time, block.trace_id.clone()))
-            .or_default()
-            .push(block.clone());
-    }
-    groups.into_values().rev().flatten().collect()
-}
-
 /// Order a project feed newest-first: **responses** descending, each response forward inside.
 ///
 /// The feed is the one view that is not chronological, and that is a statement about *responses*, not
@@ -1390,77 +1362,29 @@ fn shadow_feed_newest_first(blocks: &[BlockEntry]) -> Vec<BlockEntry> {
 /// previous explicit key was written to fix, where two blocks in different traces sharing a span id
 /// and a time compared equal and their order followed HashMap iteration.
 fn sort_feed_newest_first(blocks: Vec<BlockEntry>) -> Vec<BlockEntry> {
-    #[cfg(test)]
-    let shadow = shadow_feed_newest_first(&blocks);
-    // The chronological order first, exactly as a trace view would build it, so each response's
-    // internal order is the reconstructed one.
-    let positions = feed_positions(&blocks, |i| blocks[i].order_time);
-    let mut keyed: Vec<(FeedPosition, BlockEntry)> = positions.into_iter().zip(blocks).collect();
-    keyed.sort_by(|(a_pos, a), (b_pos, b)| {
-        a.order_time
-            .cmp(&b.order_time)
-            .then_with(|| a_pos.span.cmp(&b_pos.span))
-            .then_with(|| a_pos.message_index.cmp(&b_pos.message_index))
-            .then_with(|| a_pos.entry_index.cmp(&b_pos.entry_index))
-            .then_with(|| a_pos.after_call.cmp(&b_pos.after_call))
-            .then_with(|| a.content_hash.cmp(&b.content_hash))
-    });
-    let chronological: Vec<BlockEntry> = keyed.into_iter().map(|(_, block)| block).collect();
-
-    // Then responses, newest first. Maximal runs sharing `(trace, order_time)`, reversed as wholes.
-    let mut responses: Vec<Vec<BlockEntry>> = Vec::new();
-    for block in chronological {
-        let same_response = responses
-            .last()
-            .and_then(|run: &Vec<BlockEntry>| run.last())
-            .is_some_and(|last| {
-                last.trace_id == block.trace_id && last.order_time == block.order_time
-            });
-        if same_response {
-            responses
-                .last_mut()
-                .expect("a run exists when same_response is true")
-                .push(block);
-        } else {
-            responses.push(vec![block]);
-        }
+    // The order the resolver produced is kept. Only the *grouping* is the feed's own.
+    //
+    // This function used to re-sort with a second scalar tuple - `(order_time, span, message_index,
+    // entry_index, after_call, content_hash)` - which meant the resolver was not the ordering authority
+    // for this view: any order it improved landed in the three chronological views and was silently
+    // undone here. Measured before the change (`feed_projection_inventory`): 17 positions across six
+    // feed views, of two kinds. Four were the answer text and a tool result swapped, where this sort
+    // contradicted the very contract stated above - the resolver holds the call→result edge and this key
+    // had only the message index. The other thirteen were two parallel calls of one response, which have
+    // no semantic order at all, so the two sorts merely chose different linear extensions; the resolver's
+    // tie-break at least derives from where a block was first observed, while a span id carries no
+    // ordering meaning.
+    //
+    // Grouping is by response *identity* rather than by adjacent runs, because a valid resolved order may
+    // interleave two responses and adjacency would then split one response into several runs.
+    let mut groups: BTreeMap<(DateTime<Utc>, String), Vec<BlockEntry>> = BTreeMap::new();
+    for block in blocks {
+        groups
+            .entry((block.order_time, block.trace_id.clone()))
+            .or_default()
+            .push(block);
     }
-    responses.reverse();
-    let out: Vec<BlockEntry> = responses.into_iter().flatten().collect();
-
-    #[cfg(test)]
-    {
-        let identity = |b: &BlockEntry| {
-            format!(
-                "{}/{}/{}/{}/{}#{}",
-                &b.trace_id[..b.trace_id.len().min(8)],
-                &b.span_id[..b.span_id.len().min(8)],
-                b.message_index,
-                b.entry_index,
-                b.entry_type,
-                &b.content_hash[..b.content_hash.len().min(8)]
-            )
-        };
-        for (i, (a, b)) in shadow.iter().zip(&out).enumerate() {
-            if identity(a) != identity(b) {
-                FEED_PROJECTION_DELTA.with(|d| {
-                    d.borrow_mut().push(format!(
-                        "[{i}] resolver={} scalar={}",
-                        identity(a),
-                        identity(b)
-                    ))
-                });
-            }
-        }
-        if shadow.len() != out.len() {
-            FEED_PROJECTION_DELTA.with(|d| {
-                d.borrow_mut()
-                    .push(format!("length {} vs {}", shadow.len(), out.len()))
-            });
-        }
-    }
-
-    out
+    groups.into_values().rev().flatten().collect()
 }
 
 /// Keep only the blocks inside a requested time window.

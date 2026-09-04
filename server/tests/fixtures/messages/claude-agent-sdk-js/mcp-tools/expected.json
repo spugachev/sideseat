@@ -725,8 +725,8 @@
         "index": 10,
         "role": "assistant",
         "entry_type": "tool_use",
-        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01Vu1bgCARnJn7ZQb2ehPPWJ\",\"name\":\"ToolSearch\",\"input\":{\"query\":\"select:mcp__calculator__calculate\",\"max_results\":1}}",
-        "content_digest": "1e7b1ea198375b51",
+        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01RLMhF9frBnJYFnSXdKJaeS\",\"name\":\"ToolSearch\",\"input\":{\"query\":\"select:mcp__calculator__calculate\",\"max_results\":1}}",
+        "content_digest": "9b350aec8bfd6bcf",
         "tool_name": "ToolSearch",
         "observation_type": "tool"
       },
@@ -734,8 +734,8 @@
         "index": 11,
         "role": "assistant",
         "entry_type": "tool_use",
-        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01RLMhF9frBnJYFnSXdKJaeS\",\"name\":\"ToolSearch\",\"input\":{\"query\":\"select:mcp__calculator__calculate\",\"max_results\":1}}",
-        "content_digest": "9b350aec8bfd6bcf",
+        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01Vu1bgCARnJn7ZQb2ehPPWJ\",\"name\":\"ToolSearch\",\"input\":{\"query\":\"select:mcp__calculator__calculate\",\"max_results\":1}}",
+        "content_digest": "1e7b1ea198375b51",
         "tool_name": "ToolSearch",
         "observation_type": "tool"
       },

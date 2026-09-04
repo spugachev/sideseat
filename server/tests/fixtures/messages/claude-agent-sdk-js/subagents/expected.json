@@ -1494,8 +1494,8 @@
         "index": 10,
         "role": "assistant",
         "entry_type": "tool_use",
-        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01NhoyhRykztNT9oaCXpfPz6\",\"name\":\"Read\",\"input\":{\"file_path\":\"/private/var/folders/n_/kvwhfj054zx3zjmwj941d53c0000gr/T/sideseat-subagents-Tmke1o/shipping.ts\"}}",
-        "content_digest": "99a62b0303bdf905",
+        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01Vs6uznyGFjxPFQs2XuUUSU\",\"name\":\"Read\",\"input\":{\"file_path\":\"/private/var/folders/n_/kvwhfj054zx3zjmwj941d53c0000gr/T/sideseat-subagents-Tmke1o/shipping.ts\"}}",
+        "content_digest": "7fcb13dba3faaff1",
         "tool_name": "Read",
         "observation_type": "tool"
       },
@@ -1503,8 +1503,8 @@
         "index": 11,
         "role": "assistant",
         "entry_type": "tool_use",
-        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01Vs6uznyGFjxPFQs2XuUUSU\",\"name\":\"Read\",\"input\":{\"file_path\":\"/private/var/folders/n_/kvwhfj054zx3zjmwj941d53c0000gr/T/sideseat-subagents-Tmke1o/shipping.ts\"}}",
-        "content_digest": "7fcb13dba3faaff1",
+        "content": "{\"type\":\"tool_use\",\"id\":\"toolu_bdrk_01NhoyhRykztNT9oaCXpfPz6\",\"name\":\"Read\",\"input\":{\"file_path\":\"/private/var/folders/n_/kvwhfj054zx3zjmwj941d53c0000gr/T/sideseat-subagents-Tmke1o/shipping.ts\"}}",
+        "content_digest": "99a62b0303bdf905",
         "tool_name": "Read",
         "observation_type": "tool"
       },

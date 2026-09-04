@@ -1761,7 +1761,7 @@ it passes.
 | # | Step | Done when |
 | --- | --- | --- |
 | 1 | The `SourceProgram` truth generator, stage observables, mutation controls, and the corrected invariant suite | each new test **fails** against a deliberately broken pipeline |
-| 2 | Make the resolver authoritative for trace *and* feed, with `legacy_rank` opaque | **a reviewed 8-position delta**, not byte-identity — measured, see below |
+| 2 | Make the resolver authoritative for trace *and* feed | **landed**: the feed projects the resolved order (groups by response identity, reverses groups) instead of re-sorting. Golden delta was exactly the reviewed 17-position inventory |
 | 3 | SCC condensation and a degradation signal, then the request-scoped framing edge: shadow, then promote | a constructed cycle is reported; the 27-view ratchet empties |
 | 4 | Persist instrumentation scope, carrier provenance, ordinals, data class and **raw-evidence references** | a scope-keyed rule is expressible; no second copy of any payload |
 | 5 | The compact read envelope; settle the v2 schema and keep v1 explicitly lossy | the three already-loaded facts become reachable |

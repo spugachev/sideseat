@@ -10511,3 +10511,109 @@ fn an_idless_result_is_correlated_only_when_span_ids_order_its_call_first() {
         "the same telemetry, ordered by span id the other way, leaves the result uncorrelated"
     );
 }
+
+/// The feed is a projection of the resolved order, never a re-sort of it.
+///
+/// This is what "the resolver is the ordering authority" means for the one non-chronological view:
+/// `sort_feed_newest_first` may regroup responses and reverse the groups, and it may not change the
+/// order of two blocks within a response. The old implementation did - a second scalar tuple undid
+/// whatever the resolver had improved, which is how `bedrock/converse` showed the answer *before* the
+/// tool result it used.
+///
+/// Asserted as three properties of the projection, none of which needs plumbing to the pre-feed order:
+/// every response's subsequence is unchanged (full fingerprint, not role/kind); each response is one
+/// contiguous run; and the runs descend by `(order_time, trace_id)`, so an anchor tie between two
+/// traces has one deterministic answer.
+#[test]
+fn the_feed_projects_the_resolved_order_without_resorting_it() {
+    let t = fixed_time();
+    // Two traces, interleaved anchors, one response with several blocks including a call and result -
+    // enough structure that a re-sort of any term would be visible.
+    let turn = |q: &str, id: &str, time: chrono::DateTime<chrono::Utc>| {
+        serde_json::json!([
+            {"source": {"event": {"name": "gen_ai.user.message", "time": time.to_rfc3339()}},
+             "content": {"role": "user", "content": q}},
+            {"source": {"event": {"name": "gen_ai.choice", "time": time.to_rfc3339()}},
+             "content": {"role": "assistant", "content": [
+                 {"type": "text", "text": format!("thinking about {q}")},
+                 {"type": "tool_use", "id": id, "name": "look_up", "input": {"q": q}}
+             ]}},
+            {"source": {"event": {"name": "gen_ai.tool.message", "time": (time + chrono::Duration::seconds(1)).to_rfc3339()}},
+             "content": {"role": "tool", "content": [
+                 {"type": "tool_result", "tool_use_id": id, "content": format!("answer to {q}")}
+             ]}},
+        ])
+        .to_string()
+    };
+    let rows = vec![
+        make_span_row_with_timestamps(
+            "trace-a",
+            "span-a",
+            None,
+            &turn("alpha", "call_a", t),
+            t,
+            Some(t + chrono::Duration::seconds(2)),
+        ),
+        make_span_row_with_timestamps(
+            "trace-b",
+            "span-b",
+            None,
+            &turn("beta", "call_b", t + chrono::Duration::seconds(10)),
+            t + chrono::Duration::seconds(10),
+            Some(t + chrono::Duration::seconds(12)),
+        ),
+    ];
+
+    let resolved = process_spans(rows, &FeedOptions::new()).messages;
+    assert!(resolved.len() >= 6, "got {}", resolved.len());
+    let fingerprint = |b: &BlockEntry| {
+        format!(
+            "{}/{}/{}/{}/{}#{}",
+            b.trace_id, b.span_id, b.message_index, b.entry_index, b.entry_type, b.content_hash
+        )
+    };
+    let response_of = |b: &BlockEntry| (b.order_time, b.trace_id.clone());
+
+    let feed = sort_feed_newest_first(resolved.clone());
+
+    // 1. Within each response, the subsequence is byte-for-byte the resolved one.
+    let subsequence = |blocks: &[BlockEntry]| {
+        let mut map: std::collections::BTreeMap<_, Vec<String>> = std::collections::BTreeMap::new();
+        for b in blocks {
+            map.entry(response_of(b)).or_default().push(fingerprint(b));
+        }
+        map
+    };
+    assert_eq!(
+        subsequence(&resolved),
+        subsequence(&feed),
+        "the feed changed a response's internal order - it re-sorted instead of projecting"
+    );
+
+    // 2. Each response is one contiguous run.
+    let mut seen = std::collections::HashSet::new();
+    let mut current = None;
+    for b in &feed {
+        let key = response_of(b);
+        if current.as_ref() != Some(&key) {
+            assert!(
+                seen.insert(key.clone()),
+                "response {key:?} appears in two separate runs"
+            );
+            current = Some(key);
+        }
+    }
+
+    // 3. Runs descend by (order_time, trace_id).
+    let mut anchors: Vec<_> = Vec::new();
+    for b in &feed {
+        let key = response_of(b);
+        if anchors.last() != Some(&key) {
+            anchors.push(key);
+        }
+    }
+    let mut sorted = anchors.clone();
+    sorted.sort();
+    sorted.reverse();
+    assert_eq!(anchors, sorted, "responses are not newest-first");
+}
