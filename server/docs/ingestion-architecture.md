@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 9. Revision log at the end.
+**Status**: design, under review. Revision 10. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -384,6 +384,7 @@ raw carrier instances
    → occurrences + causal relation
    → session replay reconciliation
    → presentation projection
+   → the output contract        (stage 8 - what the caller can actually see)
 ```
 
 Each stage may only know what is listed for it. A stage that needs a fact from a later stage is
@@ -820,6 +821,97 @@ real evidence of contradiction and the current behaviour reports nothing.
 
 Span views are **observation** views — "what this span carried". Trace, session and feed views are
 **occurrence** projections. Different questions; no shared hidden history filter.
+
+## Stage 8: the output contract
+
+Revisions 1-9 specified how evidence is classified, assembled and ordered, and said nothing about the
+type it lands in. That is a gap, not a scope boundary, and it produces a direct contradiction: the design
+promises honest ambiguity, representation completeness and evidence accounting, while the DTO exposes
+**none** of the ambiguity, alternatives or lineage. An invariant whose result the caller cannot see is
+not a guarantee.
+
+### What the current shape loses
+
+Worth stating precisely, because "SideML is lossy" is already documented for roles and the rest is not:
+
+| Loss | Consequence |
+| --- | --- |
+| the API returns a **flat list of blocks under a field named `messages`**, and `total_messages` counts blocks | one provider message holding text plus two images is indistinguishable from several adjacent messages, except through `message_index` — which is assigned by enumerating the current parse, so it is not a durable identity |
+| roles collapse to four, and an **unknown role becomes `User`** | a parse failure produces a plausible false user turn. `developer` → `System` is the case review 9 showed blocks a correct framing rule |
+| the feed derives role from block *type* | every `ToolUse` is Assistant and every `ToolResult` is Tool, whatever the source message said |
+| request parameters, provider response id, temperature/top-p/max-tokens, stop sequences | extracted and persisted, but **not loaded by the message projection**, so they cannot reach the client — exactly the fields that answer "why did this answer differ?" |
+| structured output has no typed contract | `response_format` and `JsonSchemaDetails` exist but are populated only from a literal message field, and are **dropped when tool blocks are split**. Vercel's schema, output mode and provider metadata are in the corpus and not represented. The same logical structured output is `Json` for Vercel and `ToolUse` for LangGraph, with nothing recording that they are the same thing |
+| citations become generic `Context` blocks | no cited range, source id, offsets or relationship to the sentence they support, so they cannot be rendered as annotations |
+| streaming becomes completed text | the normaliser recognises `combined_chunk_content` and `chunk_count` and then emits ordinary text, discarding the count. A streamed answer is indistinguishable from an atomic one |
+| media variants are sparse | no dimensions, duration, codec, transcript, checksum, page range or **generation lineage** — so a generated image cannot say which tool call and parameters produced it except by adjacency |
+| finish reasons collapse to five, unknown ones discarded | the raw reason should survive beside the normalised category |
+| `Unknown { raw }` helps only while a block stays unknown | once a handler recognises a block, whatever that handler does not model is dropped |
+
+`BlockEntry` already carries source position, source event, source attribute and the history/correlation
+flags; `BlockDto` omits position, source event, source attribute and promotion status. So the pipeline
+computes provenance and then declines to send it.
+
+### Three contract mismatches, found and fixed
+
+The web contract is mirrored by hand, and it had drifted from the server in three ways that cost the
+client real information:
+
+| Mismatch | Effect |
+| --- | --- |
+| `ToolResult` omitted `name` | Gemini and ADK identify a result **only** by function name and emit no call id, so the client had nothing to label those results with and fell back to guessing across block-level fields. Now declared and preferred over the derived fields |
+| `ToolUse.input` declared `Record<string, unknown>` | the server's type is any JSON value, so a provider sending a bare array or string made the declaration a false statement |
+| `Unknown` omitted `raw` | the server's escape hatch against data loss was invisible in the client's type |
+
+That is the argument for **generating** the client types from a schema rather than maintaining a union
+by hand: three silent divergences in one file, each of which the compiler would have caught.
+
+### What stage 8 has to be
+
+A versioned projection, with one rule: **it may omit heavy evidence by reference, and may not silently
+erase provenance, ambiguity or a lossy transformation.**
+
+```text
+project(occurrences, cohesion_groups, selected_representations, ordering, provenance, diagnostics)
+    -> ConversationView { schema_version, envelopes, groups, occurrences, diagnostics }
+```
+
+Per occurrence: `occurrence_id`, `cohesion_group_id`, `part_index`, `role { kind, source }`,
+`placement` (in-band or request frame), canonical content, witnesses, the selected representation *and
+its alternatives*, ambiguity status, field origins, inferred fields, and losses. Per envelope: the
+provider protocol, request and response ids, model, parameters, tools, tool choice, response format —
+and the raw provider envelope where it was retained.
+
+Two type changes are worth calling out because they are behaviour, not shape. A role becomes
+`{ kind, source }` so `human`, `model`, `ipython`, `developer` and an unrecognised value survive
+normalisation — and **an unknown role must never silently become `User`**. And `placement` records
+whether a message was framing evidence or an in-band turn, which is the fact review 9's framing edge
+needs and the current model cannot express.
+
+### Migration, given that the client and 119 goldens both encode today's shape
+
+Keep the current endpoint as v1 and add v2 beside it; generate the TypeScript from the schema instead of
+hand-mirroring; dual-run with a byte-compatible v1 adapter. The existing goldens stay as **v1
+compatibility tests** — and it is worth being precise that they verify role, block kind, selected content
+fields, tool name and finish reason, *not* the whole API contract, so v2 needs its own goldens for
+occurrence identity, cohesion, provenance, alternatives and ambiguity. Historical rows whose raw carrier
+data was never persisted are marked `fidelity: legacy_incomplete` rather than having fields fabricated
+for them.
+
+### Round-tripping, and the scope decision the document owes
+
+A SideML message **cannot** be turned back into a provider request without inventing or losing
+something: the original role and instruction priority, frame versus in-band placement, the provider's
+block shape, message grouping, citation relationships, media metadata, streaming chunks, the exact
+finish reason, the original tool-vs-function protocol, synthesised tool ids (the Gemini path generates
+one), tool definitions, schema output mode, request parameters, and provider extensions. Even fields
+`ChatMessage` *has* — `response_format`, `tool_choice`, `model`, `stop`, `parallel_tool_calls` — are
+inconsistently populated and discarded when tool blocks are split.
+
+So SideML must be one of two things, declared: a **loss-aware canonical model** (byte round-trip needs
+the raw envelope retained; semantic replay needs a canonical capsule plus field-level provenance), or an
+explicitly scoped **presentation model**. Today it is used as the former and implemented as the latter,
+and the `Unknown { raw }` comment about "lossless round-tripping" is evidence that the confusion is not
+only mine.
 
 ## Invariants
 
@@ -1430,3 +1522,4 @@ reasoning is auditable rather than re-derived.
 | 7 | the invariant set | **the invariants are neither independent nor mostly testable, and the central one is not falsifiable.** Six pairs overlap (3↔9, 3↔12, 3↔5, 5↔12, 4↔6, 6↔7), and two entries are not invariants at all — claim conformance is an oracle requirement, profile permutation a determinism property. Nine have **no test**, five only weaker approximations, one is genuinely covered; `feed/props.rs` cannot generate a single shape the model needs. Six *kept* invariants would falsely accuse a legitimate corpus shape (retried calls, ordered restatement evidence refining order, branch interleavings no producer can serialise, unanswered calls in error turns, the feed's deliberate newest-first order, provably-distinct identical creations). Added the missing invariant — **distinct creation witnesses are never contracted** without independent identity evidence — with the five-case discrimination its test needs, and the admission that it catches a wrong *assembler* and not a wrong *profile*, for which ground truth is not constructible from telemetry that carries no occurrence marker. Restored the answer invariant the list had dropped, in the form that does not falsely accuse (`a turn with explicit completion evidence has an answer`). And a rule for exemptions: a legitimate one **proves the antecedent is false in the source**, and fails when the violation *disappears* | `feed/props.rs`'s generator; `carrier_semantics_are_declared` (blind to a dropped carrier); `reading_more_carriers_only_adds_messages` (rendered output, not decoder output); `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED`; `REORDERS_UNDER_PER_CARRIER` as the pattern to copy |
 | 8 | the verification apparatus | Constructive rather than critical: specified what to build. **Do not extend the row fuzzer** - it cannot reach one shape the model needs. A scenario generator derives *both* the oracle and the telemetry from a `SourceProgram`, so ground truth comes from the action taken rather than from any reading of the output; shrinking is over the program, under a contract that forbids a shrink from turning "fresh witness" into "re-delivery". Specified the five-case contraction test over **occurrence equivalence classes** (and corrected revision 7: contraction on stable identity must be *required*, or an assembler that ignores it passes), seven metamorphic transformations with what each may and may not change, five mutation controls named per seam, and the dependency order - a test that cannot fail today is worthless as a gate on tomorrow's change. Also: `reading_more_carriers_only_adds_messages` is **not** a decoder-locality test, since it compares rendered output. And the answer on falsifiability without annotation: no for arbitrary telemetry, but **yes** for controlled captures with a machine-generated manifest - drive each real SDK from a generated program against deterministic fake models, recording actions against live span contexts out of band | `feed/props.rs`; `REORDERS_UNDER_PER_CARRIER` as the bidirectional pattern; `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED` as the three that skip instead of proving |
 | 9 | the ordering layer | **`order_graph` is not the ordering layer** - the project feed re-sorts its output with a second scalar tuple, which revision 8 had assumed away and which explains the failed repair exactly (15 feed views moved because the feed's own sort saw the altered time; the trace views were decided by a tie the span term broke). Specified the framing edge's scope as one **generation invocation's input envelope**, with four committed fixtures falsifying every wider scope (`adk/image_gen`'s second instruction at index 9, `adk/reasoning`'s three request boundaries, `anthropic/session`'s changed instructions, and ADK's already-correct single carrier), and established that `Frame` **cannot** mean `role == System`, since `developer` normalises to it and an in-band system message is a turn in its array. Checked whether framing generalises: **it does not** - tool definitions are not messages, RAG context is causal, thinking is cohesion; there is no corpus basis for any other new edge class, and generic role ranks stay forbidden. Edges attach to **no** surviving copy: derived from every pre-dedup observation and mapped through lineage, or a quality tie decides which request gets the edge and `which_copy_survives_does_not_change_the_order` breaks. Reassigned every term of the sort key to its end state, with the whole tuple surviving transitionally as one opaque `legacy_rank`. Recommendation adopted: fix the defect now, in two increments, the first being provably-neutral plumbing that makes the resolver authoritative | measured: 27 trace views across 22 fixtures, every one `system@1 user@0`, now pinned bidirectionally by `a_system_instruction_precedes_the_first_user_turn` (which found `strands/swarm`, a fixture the `tool_use` survey had missed) |
+| 10 | the destination type model | Added **stage 8, the output contract**, which the design did not have - and the gap was a contradiction rather than an omission: the invariants promise honest ambiguity, representation completeness and evidence accounting while the DTO exposes none of it, and an invariant the caller cannot observe is not a guarantee. Catalogued what the current shape loses, including that the API returns a **flat list of blocks under a field named `messages`** with `total_messages` counting blocks, so one provider message holding text and two images is indistinguishable from several messages; that an unknown role silently becomes `User`, turning a parse failure into a plausible false turn; that request parameters and the provider response id are extracted and persisted but **not loaded by the message projection**; that structured output's schema and mode are dropped when tool blocks are split, and the same logical structured output is `Json` for one framework and `ToolUse` for another with nothing recording the equivalence; that streaming's chunk count is recognised and discarded; and that `BlockEntry` carries provenance which `BlockDto` declines to send. Fixed three **live contract mismatches** in the hand-mirrored client types, each costing real information. Stated the scope decision the document owes: SideML is used as a canonical model and implemented as a presentation one, and must be declared as one or the other | verified: server `ToolResult.name` (Gemini/ADK identify a result only by name) absent from the client, `ToolUse.input` declared as an object where the server sends any JSON, `Unknown` missing its `raw` |

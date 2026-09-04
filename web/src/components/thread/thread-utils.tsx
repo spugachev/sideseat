@@ -106,7 +106,9 @@ export function renderBlockContent(
         isError={content.is_error || block.is_error}
         toolCallId={content.tool_use_id || block.tool_use_id}
         toolCallIdInferred={block.tool_use_id_correlated}
-        toolName={block.tool_name || block.name}
+        // The result's own name first: for Gemini and ADK it is the only identification the source
+        // gave, and the block-level fields are derived rather than reported.
+        toolName={content.name || block.tool_name || block.name}
         projectId={projectId}
       />
     );

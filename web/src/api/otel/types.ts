@@ -129,15 +129,28 @@ export type ContentBlock =
   | { type: "document"; media_type?: string; name?: string; source: string; data: string }
   | { type: "video"; media_type?: string; source: string; data: string }
   | { type: "file"; media_type?: string; name?: string; source: string; data: string }
-  | { type: "tool_use"; id?: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id?: string; content: unknown; is_error?: boolean }
+  // `input` is any JSON value, not necessarily an object: the server's type is `JsonValue`, and a
+  // provider that sends a bare array or string for a call's arguments is passed through unchanged.
+  | { type: "tool_use"; id?: string; name: string; input: unknown }
+  // `name` is present when the source reports the tool on the *result* - Gemini and Google ADK
+  // identify a result by function name and emit no call id at all, so without this the client had
+  // nothing to label those results with and fell back to guessing.
+  | {
+      type: "tool_result";
+      tool_use_id?: string;
+      name?: string;
+      content: unknown;
+      is_error?: boolean;
+    }
   | { type: "tool_definitions"; tools: unknown[]; tool_choice?: unknown }
   | { type: "context"; data: unknown; context_type?: string }
   | { type: "refusal"; message: string }
   | { type: "json"; data: unknown }
   | { type: "thinking"; text: string; signature?: string }
   | { type: "redacted_thinking"; data: string }
-  | { type: "unknown" };
+  // `raw` is the original JSON, kept by the server so an unrecognised block is preserved rather than
+  // dropped. Declaring it is what lets the UI show the payload instead of an empty block.
+  | { type: "unknown"; raw: unknown };
 
 // === Sessions ===
 
