@@ -12,6 +12,7 @@ use opentelemetry_proto::tonic::trace::v1::span::Event;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
+use crate::data::types::ObservationType;
 use crate::domain::sideml::is_plain_data_value;
 use crate::domain::sideml::tools::tool_definition_quality;
 use crate::utils::otlp::extract_attributes;
@@ -500,6 +501,7 @@ fn extract_per_carrier(
 ) {
     let mut claimed: HashSet<String> = messages.iter().map(|m| carrier_of(&m.source)).collect();
     let mut any_specific = false;
+    let observation_type = super::attributes::detect_observation_type(span_name, attrs);
 
     for named in EXTRACTORS {
         if named.name == FALLBACK_RULE {
@@ -535,11 +537,58 @@ fn extract_per_carrier(
         );
     }
 
-    if !any_specific && !is_tool_span {
+    if is_tool_span {
+        return;
+    }
+
+    if !any_specific {
         for named in EXTRACTORS.iter().filter(|e| e.name == FALLBACK_RULE) {
             (named.extractor)(messages, tool_definitions, attrs, span_name, timestamp);
         }
+        return;
     }
+
+    // A dialect read this span, but a dialect reads the carriers it knows. If it left the span's
+    // *answer* unaccounted for, the generic pair is where the answer is - and on a **generation** span
+    // that is what `output.value` means.
+    //
+    // The observation type is what makes this safe, and it is the whole point: `output.value` means "the
+    // answer" on a generation span and "node state" on a chain span. Gated on the carrier's *name* alone
+    // this admitted LangGraph's `Prompt` and `should_continue` node state as answers and took that suite
+    // from 12 messages to 28. The type is a pure function of the span name and attributes, already
+    // computed for every span at `extract/mod.rs`, so asking it here costs nothing.
+    if observation_type != ObservationType::Generation {
+        return;
+    }
+    if messages
+        .iter()
+        .any(|m| carrier_holds_span_output(&m.source))
+    {
+        return;
+    }
+
+    let mut produced = Vec::new();
+    for named in EXTRACTORS.iter().filter(|e| e.name == FALLBACK_RULE) {
+        (named.extractor)(&mut produced, tool_definitions, attrs, span_name, timestamp);
+    }
+    for message in produced {
+        if !carrier_holds_span_output(&message.source) {
+            continue;
+        }
+        let carrier = carrier_of(&message.source);
+        if claimed.insert(carrier) {
+            messages.push(message);
+        }
+    }
+}
+
+/// Whether a carrier is one the span's own output is reported through, per the declared table.
+fn carrier_holds_span_output(source: &MessageSource) -> bool {
+    let (event, attribute) = match source {
+        MessageSource::Event { name, .. } => (Some(name.as_str()), None),
+        MessageSource::Attribute { key, .. } => (None, Some(key.as_str())),
+    };
+    crate::domain::sideml::carrier::semantics_for(event, attribute).carrier_holds_span_output
 }
 
 /// The attribute or event an observation was read from - what an extractor claims.
