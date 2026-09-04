@@ -1722,6 +1722,33 @@ at alias churn**, which is worth knowing before calling it forward-compatible:
 The missing piece is **one canonical versioned semconv compatibility module**, so alias churn stays a
 single-place edit. Not yet specified, and it should be.
 
+## Step 2 measured: the resolver's order is *better*, not identical
+
+The plan's step 2 was gated on byte-identical corpus output. **That gate cannot be met, and the reason is
+worth more than the gate was.** The feed does not consume the resolver's order at all: it re-sorts with a
+second scalar tuple (`(order_time, span, message_index, entry_index, after_call, content_hash)`) and then
+reverses response runs. So "make the resolver authoritative" is a behaviour change, and the question is
+how big.
+
+Measured by computing the resolver-authoritative projection beside the current one for every fixture —
+group by response *identity* rather than adjacent runs, reverse the groups, preserve the order within
+each — and comparing fingerprints. **Eight unique disagreements across five fixtures**, of two kinds:
+
+| Kind | What differs | Which is right |
+| --- | --- | --- |
+| entry types inverted | the resolver puts `tool_use` before `tool_result`, and `tool_result` before the answer text; the scalar sort inverts both | **the resolver** — it holds the call→result edge, while the scalar key has only `span` and `content_hash` to go on |
+| same content, different span | the two pick different *copies* of one block (identical content hash, different `span_id`) | equivalent in what is displayed; they differ only in attribution |
+
+So step 2 is a small, reviewable improvement rather than a refactor — which is the standard this document
+demands of everything else ("every delta names its edge"). The gate is restated accordingly: **eight
+positions, each attributable to a call→result edge or to a copy choice**, and any ninth is a regression.
+
+Three things this also settles. The two orders are *not* equivalent by construction, so the neutrality
+argument that made the resolver safe to run in production does **not** extend to the feed. `feed_positions`
+being shared is not sufficient, because the two comparators give its fields different precedence.
+And `content_hash` must never become a graph edge merely to force the gate green — it is a tie-break of
+last resort, and a resolver that ordered by content would make placement depend on wording.
+
 ## The plan
 
 Five separate orderings had accumulated — a five-step recommendation, a nine-step migration, review 9's
@@ -1732,7 +1759,7 @@ it passes.
 | # | Step | Done when |
 | --- | --- | --- |
 | 1 | The `SourceProgram` truth generator, stage observables, mutation controls, and the corrected invariant suite | each new test **fails** against a deliberately broken pipeline |
-| 2 | Make the resolver authoritative for trace *and* feed, with `legacy_rank` opaque | byte-identical corpus output |
+| 2 | Make the resolver authoritative for trace *and* feed, with `legacy_rank` opaque | **a reviewed 8-position delta**, not byte-identity — measured, see below |
 | 3 | SCC condensation and a degradation signal, then the request-scoped framing edge: shadow, then promote | a constructed cycle is reported; the 27-view ratchet empties |
 | 4 | Persist instrumentation scope, carrier provenance, ordinals, data class and **raw-evidence references** | a scope-keyed rule is expressible; no second copy of any payload |
 | 5 | The compact read envelope; settle the v2 schema and keep v1 explicitly lossy | the three already-loaded facts become reachable |
