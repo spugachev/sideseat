@@ -117,6 +117,41 @@ The agreement is real and worth stating: four independent SDKs produce a byte-id
 two Claude Agent SDKs agree across languages. That is a much stronger consistency claim than "the
 goldens did not change".
 
+### Extended to every shared sample: one defect, three false alarms, two corrections
+
+The survey was then run over **all eleven sample programs shared by three or more suites**, comparing
+role/kind shapes. Four outliers stood out; investigating each against its raw payload is what makes the
+technique trustworthy, because three of the four were **not** defects:
+
+| Outlier | Verdict |
+| --- | --- |
+| `strands/swarm` places its frame after the turn | **real defect** — the same one-position displacement as langgraph and claude-agent-sdk |
+| `agent-framework/image_gen` ends on three tool results with no reply | **faithful.** The payload's final message is `{"role":"assistant","parts":[{"type":"reasoning","content":""}],"finish_reason":"stop"}` — the model said *stop* and sent nothing |
+| `agent-framework/mcp_tools` shows `system, user, assistant` and no tool calls | **faithful** — the capture contains no tool call at all; the sample never reached its MCP server |
+| `adk/swarm` shows three messages for a swarm | **faithful** — a 7 KB capture with one `call_llm` span, where `transfer_to_agent` appears only in the prompt and a tool *definition*. The handoff never happened |
+
+So the technique's yield is one real defect from four candidates, and its cost is that each candidate
+needs the raw payload to settle. That is the right trade — but "a suite disagrees" is a *lead*, never a
+finding, which is precisely why cross-framework agreement cannot be an automatic gate.
+
+**Two corrections to earlier reviews come out of this**, both from committed fixtures:
+
+- Review 7 proposed refining the answer invariant to *"a turn with explicit successful completion
+  evidence has an answer"*. `agent-framework/image_gen` **falsifies it**: `finish_reason: "stop"` with
+  no answer content whatsoever. A producer's completion marker is not evidence that content exists, so
+  the refinement would falsely accuse a faithful capture. The current weaker form — assistant *or tool*
+  activity after the last user turn — is correct for this corpus.
+- The evidence that refinement needs is mostly absent anyway: `finish_reason` appears in exactly **one**
+  suite's goldens (`vercel-ai-js`). Any rule keyed on it is untestable here.
+
+And a gap the survey exposed in the answer invariant itself, worth stating rather than fixing: a trace
+ending on a *tool result* passes, because a tool call counts as activity after the question. That is
+deliberate — a trace may legitimately be captured mid-turn — but it means "the tool ran and the model
+never came back" is invisible. Of the 12 trace views with no assistant *text* after their last user
+turn, eight are `structured_output` samples whose answer legitimately arrives as JSON or a tool call,
+one is the known error exemption, and two are synthetic. Only the `image_gen` case above was neither,
+and it turned out faithful.
+
 **And the disagreement found a defect immediately.** Two suites place the **system instruction after
 the user's question**. The cause is visible in the observation types:
 
@@ -888,8 +923,13 @@ The document has a table of rejected invariants; the kept ones need the same aud
 
 One thing the list also **dropped** and should not have: a completed turn retains an answer. The
 existing `assert_has_an_answer` is what caught three of the defects in this document. It was omitted
-because `strands/error` legitimately has none — but the right condition is *"a turn with explicit
-successful completion evidence has an answer"*, not "every fixture except the error one".
+because `strands/error` legitimately has none.
+
+Review 7 proposed the condition *"a turn with explicit successful completion evidence has an answer"*,
+and a committed fixture **falsifies it**: `agent-framework/image_gen` carries `finish_reason: "stop"`
+with no answer content at all. A completion marker is not evidence that content exists. The invariant
+therefore keeps its current form, and the exemption keeps its own justification — see the cross-framework
+section for the measurement.
 
 ### False equivalence is still not detectable, and this is the load-bearing admission
 
