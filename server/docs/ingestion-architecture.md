@@ -407,7 +407,7 @@ Two shapes stood out, and they have different verdicts:
 | --- | --- | --- |
 | `openai-agents/image_gen` | three identical exceptions on three spans → **one** in the trace | **defect, fixed** (`416e7599`) |
 | `langgraph/tool_use` trace-4 | its user question present on 13 spans, **absent** from the trace view | the documented cross-trace limit — the question is byte-identical to trace-1's, so a genuine repeat is indistinguishable from a replay |
-| `strands-js/swarm` trace-1 | its user question present on **one** span, absent from the trace *and* the feed | **defect** — see below |
+| `strands-js/swarm` trace-1 | its user question present on **one** span, absent from the trace *and* the feed | **defect, fixed** — see below |
 
 ### The narrowed check, and the defect it found
 
@@ -440,9 +440,14 @@ witness when its timestamp is at or after its generation span's start **and** no
 exists in the trace. Every other child copy stays history, the timestamp rule is untouched, and no
 previous turn can be resurrected — a genuine re-send predates the span it was sent to.
 
-Not fixed here, deliberately: history classification is where three of the four measured ripples came
-from, so this needs its own measurement pass with the stated acceptance condition — **the corpus delta
-must be exactly `strands-js/swarm`**, and any second fixture is a ripple rather than a repair.
+**Fixed**, and the acceptance condition was met exactly: the corpus delta is `strands-js/swarm` alone,
+trace and feed each gaining the turn, every span view unchanged. The first attempt did ripple — rescuing
+*any* history-marked user gave langgraph's `tools` span views a message they had never shown, because a
+span view loads one span and "nothing else carries the turn" is trivially true there. Restricting the
+rescue to blocks the **child-generation** phase marked is what makes it scope-safe by construction: that
+phase only runs when an agent span is in scope, so a single-span view never reaches it.
+
+The trace now reads `system, user, assistant, tool_use, tool_result`.
 
 ## The principle
 

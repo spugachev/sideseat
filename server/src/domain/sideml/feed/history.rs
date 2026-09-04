@@ -277,8 +277,9 @@ pub fn mark_history(
     // - Generation spans have authoritative output in llm.output_messages
     // - No event bubbling, child generation spans ARE the source of truth
     // - This phase is SKIPPED
+    let mut generation_marked_users: Vec<usize> = Vec::new();
     if history_info.has_agent_spans && history_info.has_event_based_messages {
-        for block in blocks.iter_mut() {
+        for (index, block) in blocks.iter_mut().enumerate() {
             if block.is_protected() || block.is_history {
                 continue;
             }
@@ -294,6 +295,9 @@ pub fn mark_history(
                 ChatRole::User | ChatRole::System => {
                     block.is_history = true;
                     stats.generation_history += 1;
+                    if block.role == ChatRole::User {
+                        generation_marked_users.push(index);
+                    }
                 }
                 // Assistant text/thinking = intermediate output (final at root)
                 ChatRole::Assistant if block.is_text() || block.is_thinking() => {
@@ -407,6 +411,75 @@ pub fn mark_history(
                 tool_use_id = %tool_use_id,
                 "marked as history (orphan tool_result)"
             );
+        }
+    }
+
+    // Phase 6b: a turn that happened must survive somewhere.
+    //
+    // Phases 3 and 4 both rest on the same assumption - that a copy on the *root* agent span is the
+    // authoritative one, so a child's copy is an intermediate duplicate. Where that holds, marking the
+    // child costs nothing. `strands-js/swarm` is where it does not: its root agent span carries
+    // `system, assistant` and never re-lists the user's request, so phase 4 marked the chat span's copy
+    // and phase 3 the accumulator's, every copy became history, and the history-only filter dropped the
+    // class entirely. The trace and the feed showed a plan with no request, while one span view still
+    // displayed it.
+    //
+    // So one user witness is kept when nothing non-history is left to carry the turn. Two conditions,
+    // and the second is what makes it safe:
+    //
+    // - it was marked by the **child-generation** phase specifically, not by the accumulator phase. That
+    //   matters because a span view loads one span, where "nothing else carries the turn" is trivially
+    //   true - rescuing accumulator-marked blocks there gave langgraph's `tools` span views a message
+    //   they had never shown. The generation phase only runs when an agent span is in scope, so it is
+    //   scope-safe by construction;
+    // - the block's own time is **at or after** its span's start, which is what distinguishes an input
+    //   this span was given from a previous turn re-sent into it. A genuine re-send predates the span it
+    //   was sent to, so this rescue cannot resurrect one;
+    // - nothing non-history in the trace already carries that role, so where the root copy *does* exist
+    //   this changes nothing at all.
+    //
+    // The earliest surviving candidate is chosen, and only one, so a trace whose question was re-sent to
+    // nine generation spans still shows it once.
+    let traces_needing_a_user: HashSet<String> = {
+        let mut with = HashSet::new();
+        let mut without: HashSet<String> = HashSet::new();
+        for block in blocks.iter() {
+            if block.role != ChatRole::User {
+                continue;
+            }
+            if block.is_history {
+                without.insert(block.trace_id.clone());
+            } else {
+                with.insert(block.trace_id.clone());
+            }
+        }
+        without.difference(&with).cloned().collect()
+    };
+    if !traces_needing_a_user.is_empty() {
+        let mut rescued: HashSet<String> = HashSet::new();
+        let mut candidates: Vec<usize> = generation_marked_users
+            .iter()
+            .copied()
+            .filter(|&i| {
+                let block = &blocks[i];
+                block.is_history
+                    && block.role == ChatRole::User
+                    && traces_needing_a_user.contains(&block.trace_id)
+                    && span_timestamps
+                        .get(&block.span_id)
+                        .is_none_or(|t| block.timestamp >= t.span_start)
+            })
+            .collect();
+        candidates.sort_by_key(|&i| (blocks[i].timestamp, blocks[i].span_id.clone()));
+        for i in candidates {
+            if rescued.insert(blocks[i].trace_id.clone()) {
+                blocks[i].is_history = false;
+                tracing::debug!(
+                    span_id = %blocks[i].span_id,
+                    trace_id = %blocks[i].trace_id,
+                    "kept a user turn that every phase had marked history - nothing else carried it"
+                );
+            }
         }
     }
 
