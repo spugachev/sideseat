@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 11. Revision log at the end.
+**Status**: design, under review. Revision 12. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -407,7 +407,8 @@ span-wide lookup — which is the hidden coupling this stage exists to remove. T
 ```rust
 CarrierBundle {
     family_locator,    // trace / span / source kind / family / instance ordinal
-    members,           // per member: key or event name, ordinal, raw payload
+    members,           // per member: key or event name, ordinal, and a *reference* to the raw
+                       // payload rather than a second copy of it - see the data-class section
     span_context,      // operation name, span name, observation type, hierarchy, start and end
     instrumentation,   // scope name and version, resource declarations
 }
@@ -1450,6 +1451,25 @@ Selecting on instrumentation scope is still materially better than detecting a f
 - generic semconv rules match on carrier family, operation and observation type and never consult it,
   so scope refines rather than routes.
 
+### Measured: the normalisation layer already reads no framework at all
+
+Every review so far has reported a defect, so it is worth recording the one thing that measures
+*better* than the design assumed. Searching the whole of `domain/sideml/` — normalisation, carriers,
+dedup, history, correlation, ordering, cache — for any read of the framework:
+
+**There is none.** Every occurrence is a comment naming which producer motivated a shape ("Agent
+Framework uses `content` instead of `text`"), never a branch on a `Framework` value. `MessageSpanRow`
+does not even carry the field, so the reconstruction stages could not read it if they wanted to.
+
+Two consequences. The claim "framework identity is not the correctness switch" is **already true at the
+stage where correctness is decided** — the dependency lives entirely in extraction, which is exactly
+where the design says irreducible dialect adapters belong. And review 11's observation that framework is
+persisted, filterable, and never reaches reconstruction is therefore not a defect: it is the property
+holding.
+
+That narrows the redesign's job. Stages 3-7 need to be *made* explicit and testable; they do not need to
+be made framework-independent, because they are.
+
 ### What the redesign can and cannot shrink
 
 Counted over today's code, so the payoff is a number rather than a feeling:
@@ -1477,7 +1497,104 @@ made twice:
 **That list is the deliverable.** It is what "less fragile" means concretely: six decisions that today
 depend on a framework's identity or on another carrier's presence, replaced by per-observation claims.
 
-### The honest limit
+### Data classes, because this design changes what is stored
+
+The corpus contains the proof that this is not hypothetical: `crewai/agent_core` is gitignored because
+CrewAI serialises its entire model configuration into a span attribute and the capture held a live
+`aws_secret_access_key` and `aws_session_token`. The design's direction is to read *more* carriers more
+faithfully, so exposure is a consequence of the architecture rather than a separate concern.
+
+### What happens to such a value today
+
+There is no ingestion-time redactor. What exists (`truncate_for_log`'s neighbour in `utils/string.rs`)
+only *recognises* producer-supplied placeholders like `<redacted>`; it transforms nothing. Copies of one
+secret-bearing span:
+
+| Copy | When |
+| --- | --- |
+| `raw_span` | **always** — `build_raw_span_json` copies every span, event, link and resource attribute unfiltered |
+| `messages` | only if the generic reader admits that carrier. CrewAI's own extractor reads `crew_tasks` and `output.value`, not the configuration in `input.value`, so today it does not |
+| `input_preview` | possibly, truncated to 200 characters, if the value falls early enough |
+| the Redis stream | temporarily, as the whole protobuf request, until acknowledged and trimmed |
+| `traces.jsonl` | in debug mode, the complete request, append-only |
+
+The four message views load `messages`, never `raw_span` — so a value that stayed out of `messages` is
+absent from all four. `raw_span` is reachable through span, trace and span-feed routes with
+`include_raw_span=true`, and through MCP's `get_raw_span`. All require project read access.
+
+One place a value's *content* reaches a log: an unparseable attribute's first 100 characters, at
+**trace** level (`parse_json_with_fallback`). Off by default, and genuinely useful for diagnosing an
+extractor — worth knowing rather than removing.
+
+### The correction: persisting raw payloads is not a pure addition
+
+Revision 11 called provenance capture "a pure addition". For the scope and the locator that is true.
+For **lossless raw carrier payloads** it is false: `raw_span` already holds a lossless copy, so
+persisting the payloads again duplicates sensitive bytes *and* moves them out of a debugging archive
+into the hot reconstruction contract — into the cache key, the projection, and whatever v2 returns —
+without defining retention, access or projection boundaries.
+
+So a carrier member persists a **reference**, not the bytes:
+
+```rust
+CarrierMemberRecord {
+    locator,              // trace / span / source kind / key / ordinal
+    source_path,          // where in the payload
+    data_class,           // see below
+    payload_digest, size,
+    raw_evidence_ref,     // addresses the existing raw archive - no second byte copy
+    decode_status,        // and losses
+}
+```
+
+### The data classes, and the one projection rule that follows
+
+The principled line is **not** "does this look like a secret" — that is a regex that will miss the next
+credential format, corrupt a legitimate prompt that discusses credentials, and create false confidence.
+The line is *what kind of thing the value is*:
+
+| Class | Treatment |
+| --- | --- |
+| authored content, model output, tool input/output, retrieved context | preserved verbatim. Masking these destroys the product — a user debugging a prompt needs the prompt |
+| **framework execution configuration** — provider clients, model objects, credential chains, environment snapshots | evidence about execution, and **never a conversation occurrence** |
+| credentials inside that configuration | the exact bytes have almost no debugging value; presence, source, type and expiry do |
+| unknown | preserved as raw evidence, and **not promoted** into the conversation |
+
+The rule: **`framework_config` is never a conversation occurrence.** It may inform an envelope, a
+diagnostic or a raw-evidence view. That single rule is what stops a CrewAI model configuration from
+being rendered as a user turn — which is exactly what the third failed attempt in the ripple table did
+to `crewai/files`.
+
+And it is enforceable *because* of this document's central principle. "Carrier instance, not carrier
+name" is what lets `input.value` on a CrewAI configuration span be raw evidence while `input.value` on a
+generation span is content. The same mechanism, paying off a third time.
+
+### Retention, which is the other half
+
+Canonical conversation content deserves the trace's normal lifetime; lossless raw evidence deserves a
+separately configurable and usually shorter one. Today they share it, and the two backends differ in a
+way that should be documented rather than discovered: **DuckDB defaults to a count limit only** (five
+million spans, no age limit unless configured), while **ClickHouse carries a 90-day TTL** plus optional
+age cleanup. So the same deployment decision has different consequences per backend.
+
+### How it is verified
+
+A synthetic span carrying a unique sentinel token, asserting: it appears **once** in retained raw
+evidence; **zero** times in `messages`, previews, tool definitions, envelopes and provenance ledgers when
+classified as framework configuration; that all four message endpoints omit it; that the authorised raw
+endpoint returns it; that an unauthenticated or cross-project reader cannot; that raw-evidence expiry
+removes it while canonical content survives; and that debug capture is *deliberately* raw.
+
+### What the operator documentation must say
+
+Not in this document, but it must exist, and it must say plainly: SideSeat stores raw OTLP span, event
+and resource attributes, so telemetry can contain prompts, documents, database statements and
+credentials a framework serialised by accident; `raw_span`, the Redis stream, backups and debug captures
+are all sensitive; debug mode writes complete requests to disk; which routes expose raw data and under
+which scope; how to configure age retention and delete affected traces or projects; and that **OTLP
+ingestion authentication is optional and defaults off**.
+
+## The honest limit
 
 No system can interpret every future private dialect. If two producers emit identical OTLP meaning
 different things, the information is absent. Coverage says less than it looks: the support matrix
@@ -1559,7 +1676,7 @@ where each step is worth doing even if the next never happens:
 
 | # | Step | Worth doing alone because |
 | --- | --- | --- |
-| 1 | Capture and persist carrier provenance, event ordinals and **instrumentation scope** | scope is not recorded at all today; nothing downstream can be scope-aware until it is, and it is a pure addition |
+| 1 | Capture and persist carrier provenance, event ordinals and **instrumentation scope** | scope is not recorded at all today and nothing downstream can be scope-aware until it is. A pure addition for the locator and the scope — but **not** for raw payloads, which `raw_span` already holds losslessly: those persist as a reference, per the data-class rule |
 | 2 | Refactor `order_graph` into a pure resolver (`nodes, groups, edges, priorities`), with real SCC condensation and a degradation signal | a cycle currently releases the smallest node and reports nothing |
 | 3 | Claim ledger and annotated claim fixtures, in shadow mode | makes the three silent failure modes detectable, whatever decides the claims |
 | 4 | Move cross-carrier authority out of decoders (OpenInference enrichment, Claude Code suppression) | those are stage-4 and stage-6 decisions sitting in stage 2, and each is a place a fix has to be made twice |
@@ -1618,3 +1735,4 @@ reasoning is auditable rather than re-derived.
 | 9 | the ordering layer | **`order_graph` is not the ordering layer** - the project feed re-sorts its output with a second scalar tuple, which revision 8 had assumed away and which explains the failed repair exactly (15 feed views moved because the feed's own sort saw the altered time; the trace views were decided by a tie the span term broke). Specified the framing edge's scope as one **generation invocation's input envelope**, with four committed fixtures falsifying every wider scope (`adk/image_gen`'s second instruction at index 9, `adk/reasoning`'s three request boundaries, `anthropic/session`'s changed instructions, and ADK's already-correct single carrier), and established that `Frame` **cannot** mean `role == System`, since `developer` normalises to it and an in-band system message is a turn in its array. Checked whether framing generalises: **it does not** - tool definitions are not messages, RAG context is causal, thinking is cohesion; there is no corpus basis for any other new edge class, and generic role ranks stay forbidden. Edges attach to **no** surviving copy: derived from every pre-dedup observation and mapped through lineage, or a quality tie decides which request gets the edge and `which_copy_survives_does_not_change_the_order` breaks. Reassigned every term of the sort key to its end state, with the whole tuple surviving transitionally as one opaque `legacy_rank`. Recommendation adopted: fix the defect now, in two increments, the first being provably-neutral plumbing that makes the resolver authoritative | measured: 27 trace views across 22 fixtures, every one `system@1 user@0`, now pinned bidirectionally by `a_system_instruction_precedes_the_first_user_turn` (which found `strands/swarm`, a fixture the `tool_use` survey had missed) |
 | 10 | the destination type model | Added **stage 8, the output contract**, which the design did not have - and the gap was a contradiction rather than an omission: the invariants promise honest ambiguity, representation completeness and evidence accounting while the DTO exposes none of it, and an invariant the caller cannot observe is not a guarantee. Catalogued what the current shape loses, including that the API returns a **flat list of blocks under a field named `messages`** with `total_messages` counting blocks, so one provider message holding text and two images is indistinguishable from several messages; that an unknown role silently becomes `User`, turning a parse failure into a plausible false turn; that request parameters and the provider response id are extracted and persisted but **not loaded by the message projection**; that structured output's schema and mode are dropped when tool blocks are split, and the same logical structured output is `Json` for one framework and `ToolUse` for another with nothing recording the equivalence; that streaming's chunk count is recognised and discarded; and that `BlockEntry` carries provenance which `BlockDto` declines to send. Fixed three **live contract mismatches** in the hand-mirrored client types, each costing real information. Stated the scope decision the document owes: SideML is used as a canonical model and implemented as a presentation one, and must be declared as one or the other | verified: server `ToolResult.name` (Gemini/ADK identify a result only by name) absent from the client, `ToolUse.input` declared as an object where the server sends any JSON, `Unknown` missing its `raw` |
 | 11 | the read path | **Stage 8 specified an output that cannot be built from its input** - revision 10 named envelopes and gave no stage the job of hydrating them, which is review 4's persistence finding one layer later. Added **stage 0R, the read projection**, before reconstruction rather than inside stage 8, because hydration decides what stages 3-7 may know, how wide the query is, and what enters the cache key, and is independently testable per backend. Audited persisted vs loaded vs reachable: three facts are **already loaded and still unreachable** (input/output tokens, both span timestamps, the exact exception fields), so omitting them saves no bandwidth; a dozen more need a second request joined on `(trace_id, span_id)`; and the instrumentation scope is reachable nowhere because extraction ignores `scope_spans.scope`. `include_raw_span` is **not accepted on the message endpoints at all**, and even where it is, using it requires a client to reimplement the dialect fallback chains and the enrichment - so it is a debugging hatch, not a contract. The four views report **four different totals**, the feed's being 'spend on message-query-eligible spans of this page', which is none of the three things a caller might mean; and block-level `tokens`/`cost` are the span's totals copied per block, so the names invite a wrong sum. The cache settles the widening question: a field that affects the answer **must** be in the row or a changed parameter serves a stale envelope under an unchanged key | measured: a second session-sized request roughly doubles p50 (23.5 → ~47 ms DuckDB, 357 → ~715 ms ClickHouse) against `additional bytes / 27 MB/s` for same-query widening |
+| 12 | data sensitivity | The corpus already contains the proof: `crewai/agent_core` is gitignored because CrewAI serialises its whole model configuration into a span attribute and the capture held live AWS credentials. **Corrected revision 11's claim that provenance persistence is "a pure addition"** - for the locator and the scope it is, for *lossless raw payloads* it is not: `raw_span` already holds a lossless copy, so persisting them again duplicates sensitive bytes and moves them from a debugging archive into the hot reconstruction contract, the cache key included. A carrier member therefore persists a **reference**, a digest and a data class rather than the bytes. Established the principled line, which is not "does this look like a secret" (a regex that misses the next format and corrupts a prompt discussing credentials) but **what kind of thing the value is** - and one rule follows: `framework_config` is **never a conversation occurrence**, which is exactly what the third ripple-table failure did to `crewai/files`. Enforceable *because* of "carrier instance, not carrier name", the same principle paying off a third time. Traced every copy a secret-bearing span makes today, documented the DuckDB/ClickHouse retention asymmetry (count-only by default versus a 90-day TTL), and specified the sentinel-token verification | verified: `build_raw_span_json` filters nothing; no redactor exists (the helper only recognises producer placeholders); the four message views never load `raw_span`; one trace-level log carries 100 characters of an unparseable value |
