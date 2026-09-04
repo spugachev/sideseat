@@ -1945,6 +1945,119 @@ fn reading_more_carriers_only_adds_messages() {
 /// redesign exists to prevent.
 const REORDERS_UNDER_PER_CARRIER: &[(&str, &str)] = &[];
 
+/// A system instruction is the frame a request was made in, so it precedes the request's first user
+/// turn.
+///
+/// Nine of the eleven suites carrying a `tool_use` sample satisfy this, four of them with a
+/// byte-identical role/kind shape. The two that do not are the two where the instruction and the
+/// question arrive on *different* spans: a framework reports the instruction on the span that sent it -
+/// the generation span - while the question came in on the orchestration span that started earlier, so
+/// ordering by when the evidence arrived puts the frame after the question.
+///
+/// This is a **known gap**, not an exemption: the invariant's antecedent is true and the output is
+/// wrong. Listing it bidirectionally is what keeps that honest - a new fixture cannot join the list
+/// silently, and a fixture that starts passing must be removed. Fixing it needs an ordering *edge*
+/// (`system` → the request's other inputs) rather than a key term; two scalar attempts are recorded in
+/// `server/docs/ingestion-architecture.md`, one of which repaired no trace view at all.
+///
+/// Scoped to the *first* system and the *first* user message of a trace, which is deliberately weaker
+/// than the real relation. The real one is per **request**, one generation invocation's input envelope,
+/// and a trace legitimately holds several: `adk/image_gen` carries a second instruction at index 9 after
+/// the first turn completed, and `adk/reasoning` repeats one instruction at indices 0, 4 and 8. Comparing
+/// firsts is immune to all of that.
+///
+/// What it cannot see: a trace whose *first* request carries no instruction while a later one does
+/// would be accused wrongly. No fixture has that shape - every one of the 27 violations is the
+/// one-position displacement above - so the weaker form is sound against this corpus and would need
+/// replacing by the per-request relation before it could be trusted against an arbitrary producer.
+///
+/// Also deliberately not keyed on `role == System`: `developer` normalises to `System`, and an in-band
+/// system message inside an ordered array is a turn in that array rather than a frame. Comparing firsts
+/// sidesteps that too, where a general rule would have to distinguish them.
+/// 27 trace views across 22 fixtures, and every one of them is `system@1, user@0` - the frame is
+/// displaced by exactly one position, never more. One cause, one fix.
+const SYSTEM_FRAME_GAP: &[(&str, &str)] = &[
+    (
+        "langgraph/",
+        "instruction on the generation span, question on the chain span that started earlier",
+    ),
+    (
+        "claude-agent-sdk/",
+        "user_system_prompt is reported on the generation span; the turn arrives on an earlier span",
+    ),
+    (
+        "claude-agent-sdk-js/",
+        "same as the Python SDK - the two agree exactly, including on this",
+    ),
+    (
+        "strands/swarm",
+        "the swarm's request arrives on its orchestrator span, the planner's prompt on the agent span",
+    ),
+];
+
+/// Every trace view whose system instruction sorts after the first user turn.
+fn system_frame_violations(built: &Built) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, scope, rows) in &built.invariants {
+        if !matches!(scope, Scope::Trace { .. }) {
+            continue;
+        }
+        let first_user = rows.iter().position(|r| r.role == "user");
+        let first_system = rows.iter().position(|r| r.role == "system");
+        if let (Some(user), Some(system)) = (first_user, first_system)
+            && system > user
+        {
+            out.push(format!("{name}: system at {system}, first user at {user}"));
+        }
+    }
+    out
+}
+
+/// The frame precedes the first turn, and the exceptions are named in both directions.
+#[test]
+fn a_system_instruction_precedes_the_first_user_turn() {
+    let fixtures = discover_fixtures();
+    if fixtures.is_empty() {
+        eprintln!("system frame: no fixtures - skipping");
+        return;
+    }
+
+    let pricing = PricingService::init_for_test().expect("offline pricing service");
+    let mut violations: Vec<String> = Vec::new();
+    for (label, paths) in &fixtures {
+        let rows = rows_for_mode(&pricing, paths, ExtractionMode::PerCarrier);
+        let built = build_golden(label, paths, &rows);
+        for v in system_frame_violations(&built) {
+            violations.push(format!("{label} / {v}"));
+        }
+    }
+
+    let unexpected: Vec<&String> = violations
+        .iter()
+        .filter(|v| !SYSTEM_FRAME_GAP.iter().any(|(f, _)| v.starts_with(f)))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "a system instruction sorted after the first user turn in a fixture that is not a known gap \
+         - a frame is not a turn:\n  {}",
+        unexpected
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+
+    // Both directions, or the list rots into a formality: an entry that now passes has been fixed by
+    // the ordering work and must be removed.
+    for (fixture, reason) in SYSTEM_FRAME_GAP {
+        assert!(
+            violations.iter().any(|v| v.starts_with(fixture)),
+            "{fixture} now orders its system instruction first ({reason}) - remove it from \
+             SYSTEM_FRAME_GAP"
+        );
+    }
+}
+
 /// Replay a fixture through the real ingestion path in a chosen extraction mode.
 fn rows_for_mode(
     pricing: &PricingService,

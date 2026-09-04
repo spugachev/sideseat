@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: design, under review. Revision 8. Revision log at the end.
+**Status**: design, under review. Revision 9. Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span,
 trace, session and feed views return. Not how they are stored, queued or served.
@@ -149,13 +149,121 @@ run reorders the feed, which reverses runs as wholes. A scalar cannot express "b
 inventing a time that is not a response's time, which would re-entangle the display timestamp that
 `order_time` was split out to protect.
 
-So this needs a **hard edge, not a key term**: `system → the other inputs of its request`, resolved in
-`order_graph` where "before" is a constraint rather than a position. It is the first case in this
-document where the constraint form is not merely tidier but *necessary*, and it is an input-framing
-constraint rather than a causal one — a class the resolver does not yet have.
+So this needs a **hard edge, not a key term**: `system → the other inputs of its request`, resolved
+where "before" is a constraint rather than a position. It is the first case in this document where the
+constraint form is not merely tidier but *necessary*, and it is an input-framing constraint rather than
+a causal one — a class the resolver does not yet have.
 
 Reverted. Four measured attempts now, and this is the only one whose diagnosis names the mechanism that
 would work.
+
+### The scope of the framing edge, and the fixtures that falsify a wrong one
+
+"Its request" is **one generation invocation's input envelope** — keyed today by
+`(trace_id, generation_span_id)`, and in the target model by a `RequestInputId` from the carrier-bundle
+locator. It is emphatically *not* the trace, an arbitrary span, `batch_key` (that is response batching:
+`(trace, span, timestamp, direction)`) or dedup's `ResponseKey` (which carries carrier and content shape
+only to rank repeated calls).
+
+Every wider scope is already falsified by a committed fixture:
+
+| Wrong scope | Falsified by |
+| --- | --- |
+| the whole trace | `adk/image_gen` — its second art-critic instruction belongs at index 9, *after* the first turn completed, not before the initial user |
+| the whole session | `adk/reasoning` — the same instruction legitimately recurs at indices 0, 4 and 8, one per request boundary |
+| "all system messages lead" | `anthropic/session` — changed instructions at indices 0, 5 and 10 |
+| anything that reorders a correct request | `adk/image_gen` again — its single-carrier request is already `system, user`, and `assert_carrier_subsequence` requires that array order to survive |
+
+And **`Frame` cannot mean `role == System`**: `developer` normalises to `System`, and an in-band system
+or developer message inside an ordered array is a turn *in that array*, keeping only its forward
+positional scope. The frame is the detached request prefix — `system_instruction`,
+`user_system_prompt` — which is a fact about the carrier, not about the role.
+
+### Measured extent, and a ratchet so it cannot grow silently
+
+`a_system_instruction_precedes_the_first_user_turn` now measures it: **27 trace views across 22
+fixtures, and every single one is `system@1, user@0`** — displaced by exactly one position, never more.
+One cause, one fix. Three suites: claude-agent-sdk (8 fixtures), claude-agent-sdk-js (8, agreeing
+exactly with the Python SDK), langgraph (5), and `strands/swarm` — which the ratchet *found*, since the
+cross-framework survey had only looked at `tool_use`.
+
+It is a **known gap, not an exemption**: the invariant's antecedent is true and the output is wrong, so
+review 8's exemption rule does not apply. It is listed bidirectionally instead, the
+`REORDERS_UNDER_PER_CARRIER` pattern — a new fixture cannot join silently, and a fixture that starts
+passing must be removed. Both directions mutation-verified.
+
+The test compares *first* system against *first* user, which is deliberately weaker than the real
+per-request relation and immune to the four wrong scopes above. Its own limit is stated where it lives: a
+trace whose first request carries no instruction while a later one does would be accused wrongly, and no
+fixture has that shape.
+
+### Does the framing class generalise? Mostly no, and that is worth knowing
+
+Checked against the corpus, input framing is the **only** additional ordering relation it proves
+necessary — everything else that looked like a candidate is already covered:
+
+| Candidate | Why it is not a new edge class |
+| --- | --- |
+| tool definitions | not messages at all — `FeedResult.tool_definitions`, deduplicated and sorted alphabetically |
+| retrieved RAG context | represented as a tool result, so its placement is *causal* (`strands-js/rag-local`). `ContentBlock::Context` exists but **no committed golden has `entry_type: context`**, so there is no corpus basis for an edge |
+| thinking before its text | atomic-emission cohesion plus source position (`adk/reasoning` has them adjacent from one response) |
+| assistant preamble before its calls | the same — cohesion, not framing |
+
+So: do not introduce generic role ranks for system, context, thinking or tools. That is the same trap
+`dedup.rs` already documents for role ranking, arriving from a new direction.
+
+### The correction that matters most: `order_graph` is not the ordering layer
+
+Revision 8 assumed it was. It is not — **the project feed re-sorts the resolver's output** with a second
+scalar tuple, `(order_time, span, message_index, entry_index, after_call, content_hash)`
+(`feed/mod.rs:1370`), before reversing response runs. So there are two scalar orderings, and the
+resolver is not the final authority for that view. That explains the shape of the failed attempt
+precisely: it changed 15 *feed* views because the feed's own sort responded to the altered time, while
+the trace views were decided by a tie the span term broke.
+
+Consequently the work is two increments, in this order:
+
+1. **Provably neutral plumbing**: compute today's scalar order once as an opaque `legacy_rank`, pass
+   ranks, response groups and edges to the resolver, and make the feed consume resolver rank *within* a
+   response instead of rebuilding `feed_positions`. Byte-identical across the corpus is the gate. This
+   is much smaller than the stage-7 refactor and it makes the resolver's answer authoritative — which
+   nothing else in this document can be built on until it is true.
+2. **The framing edge**, request-scoped, shadowed and then promoted one class at a time.
+
+Adding an edge class does *not* require the full refactor: `Constraints` already gates classes
+individually, `NEUTRAL` must reproduce the legacy order byte-for-byte, and generation dataflow already
+demonstrates the exact pattern of reading pre-dedup evidence and projecting endpoints through lineage.
+Two caveats: `NEUTRAL` proves a *disabled* class is neutral, never that the request scope is right — that
+needs its own A/B assertions — and a bad framing edge can cycle, which today is silently resolved by
+releasing the smallest node, with no SCC diagnostic.
+
+### Which copy's span does the edge attach to?
+
+**None of them.** Edges are derived from *all* pre-dedup observations of the instruction and then mapped
+through lineage to survivor units, giving the union `system_survivor → request₁ inputs`,
+`… → request₂ inputs`, and so on. Generation dataflow already avoids representative dependence this
+way; priorities likewise read every credible copy rather than the winner.
+
+Reading `survivors[i].span_id` instead would make a quality tie decide which request gets the edge, which
+is exactly what `which_copy_survives_does_not_change_the_order` forbids — and that test's perturbation
+already flips winners in 17 fixtures. Framing eligibility therefore belongs to each observation's
+provenance, never to the chosen representative's role.
+
+### What becomes of the sort key
+
+The coherent end state, with each term reassigned rather than deleted:
+
+| Term | Becomes |
+| --- | --- |
+| `batch_time` | credible-time ready-node **priority**, never precedence |
+| `message_index`, `entry_index` | local sequence edges, or order within a contracted unit |
+| `after_call` | gone — call → result is an edge |
+| `span` | part of request identity and witness location, not semantic order |
+| `content_hash` | **must not** decide order: changing a representation would then change placement |
+| the final tie-break | a stable occurrence/witness locator |
+
+Transitionally the whole tuple survives as one opaque `legacy_rank`, used only to break ties among
+simultaneously-ready nodes — which is precisely the role `unit_min_legacy` already plays under `NEUTRAL`.
 
 Two things this establishes for the design. Cross-SDK agreement belongs in the verification apparatus
 as a first-class check, not as an observation. And the ordering layer needs constraints for input
@@ -655,7 +763,9 @@ Deterministic topological order over the occurrence DAG: contracted atomic group
 edges, soft local sequence constraints, credible time as ready-node priority only, SCCs condensed and
 reported.
 
-**`order_graph` is reusable as algorithms, not as a module** — revision 3 overstated this. What is
+**`order_graph` is not even the whole ordering layer** — the project feed re-sorts its output with a
+second scalar tuple (`feed/mod.rs:1370`), so the resolver is not the final authority for that view. And
+it is **reusable as algorithms, not as a module** — revision 3 overstated this. What is
 reusable: sparse adjacency construction, union-find, the deterministic Kahn queue, the barrier
 machinery. What must go: `collect_order_evidence` (`order_graph.rs:105`) derives its facts from
 `BlockEntry` — carrier semantics, history classification, output direction, generation-span
@@ -1279,3 +1389,4 @@ reasoning is auditable rather than re-derived.
 | 6 | framework independence | **the claim was not defensible and is now weakened to one that is**: framework identity is not required to decode and conservatively render *supported semconv* carriers, while producer scope and version remain correctness inputs for private dialects and for standard carriers whose occurrence semantics are locally ambiguous. "A conforming producer works automatically" is false — a producer emitting correct semconv **plus** its real answer in a private member (the CrewAI `raw` shape) leaves that answer opaque, because profiles may not read arbitrary payload. Counted the payoff instead of asserting it: 13 of 16 extractor families and ~10 attribute-recovery families are **irreducible** dialect adapters, so what the redesign removes is the **six framework-specific policy couplings**, now listed as the deliverable. Added the semconv-revision analysis — better at meaning changes, slightly *worse* at alias churn unless one canonical versioned compatibility module exists, which is not yet specified. And the ripple table gained a third row, measured in this cycle: the "obviously right" fix of letting the generic reader fill an empty side failed three ways, ending in langgraph 12 → 28 messages, because `output.value` means *answer* on a generation span and *node state* on a chain span | `attributes.rs`'s 28 recognition rules and its private usage-JSON readers; `messages.rs`'s 16 extractor families; measurement of `crewai/files`, `answer_beside_the_conversation`, `nested_state_messages` and the langgraph suite |
 | 7 | the invariant set | **the invariants are neither independent nor mostly testable, and the central one is not falsifiable.** Six pairs overlap (3↔9, 3↔12, 3↔5, 5↔12, 4↔6, 6↔7), and two entries are not invariants at all — claim conformance is an oracle requirement, profile permutation a determinism property. Nine have **no test**, five only weaker approximations, one is genuinely covered; `feed/props.rs` cannot generate a single shape the model needs. Six *kept* invariants would falsely accuse a legitimate corpus shape (retried calls, ordered restatement evidence refining order, branch interleavings no producer can serialise, unanswered calls in error turns, the feed's deliberate newest-first order, provably-distinct identical creations). Added the missing invariant — **distinct creation witnesses are never contracted** without independent identity evidence — with the five-case discrimination its test needs, and the admission that it catches a wrong *assembler* and not a wrong *profile*, for which ground truth is not constructible from telemetry that carries no occurrence marker. Restored the answer invariant the list had dropped, in the form that does not falsely accuse (`a turn with explicit completion evidence has an answer`). And a rule for exemptions: a legitimate one **proves the antecedent is false in the source**, and fails when the violation *disappears* | `feed/props.rs`'s generator; `carrier_semantics_are_declared` (blind to a dropped carrier); `reading_more_carriers_only_adds_messages` (rendered output, not decoder output); `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED`; `REORDERS_UNDER_PER_CARRIER` as the pattern to copy |
 | 8 | the verification apparatus | Constructive rather than critical: specified what to build. **Do not extend the row fuzzer** - it cannot reach one shape the model needs. A scenario generator derives *both* the oracle and the telemetry from a `SourceProgram`, so ground truth comes from the action taken rather than from any reading of the output; shrinking is over the program, under a contract that forbids a shrink from turning "fresh witness" into "re-delivery". Specified the five-case contraction test over **occurrence equivalence classes** (and corrected revision 7: contraction on stable identity must be *required*, or an assembler that ignores it passes), seven metamorphic transformations with what each may and may not change, five mutation controls named per seam, and the dependency order - a test that cannot fail today is worthless as a gate on tomorrow's change. Also: `reading_more_carriers_only_adds_messages` is **not** a decoder-locality test, since it compares rendered output. And the answer on falsifiability without annotation: no for arbitrary telemetry, but **yes** for controlled captures with a machine-generated manifest - drive each real SDK from a generated program against deterministic fake models, recording actions against live span contexts out of band | `feed/props.rs`; `REORDERS_UNDER_PER_CARRIER` as the bidirectional pattern; `PAIRING_EXEMPT`, `NO_ANSWER_EXPECTED`, `KNOWN_DEFAULTED` as the three that skip instead of proving |
+| 9 | the ordering layer | **`order_graph` is not the ordering layer** - the project feed re-sorts its output with a second scalar tuple, which revision 8 had assumed away and which explains the failed repair exactly (15 feed views moved because the feed's own sort saw the altered time; the trace views were decided by a tie the span term broke). Specified the framing edge's scope as one **generation invocation's input envelope**, with four committed fixtures falsifying every wider scope (`adk/image_gen`'s second instruction at index 9, `adk/reasoning`'s three request boundaries, `anthropic/session`'s changed instructions, and ADK's already-correct single carrier), and established that `Frame` **cannot** mean `role == System`, since `developer` normalises to it and an in-band system message is a turn in its array. Checked whether framing generalises: **it does not** - tool definitions are not messages, RAG context is causal, thinking is cohesion; there is no corpus basis for any other new edge class, and generic role ranks stay forbidden. Edges attach to **no** surviving copy: derived from every pre-dedup observation and mapped through lineage, or a quality tie decides which request gets the edge and `which_copy_survives_does_not_change_the_order` breaks. Reassigned every term of the sort key to its end state, with the whole tuple surviving transitionally as one opaque `legacy_rank`. Recommendation adopted: fix the defect now, in two increments, the first being provably-neutral plumbing that makes the resolver authoritative | measured: 27 trace views across 22 fixtures, every one `system@1 user@0`, now pinned bidirectionally by `a_system_instruction_precedes_the_first_user_turn` (which found `strands/swarm`, a fixture the `tool_use` survey had missed) |
