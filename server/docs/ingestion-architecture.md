@@ -390,6 +390,56 @@ as a first-class check, not as an observation. And the ordering layer needs cons
 *framing*, not only for causality — which is an argument for the constraint graph that neither the
 ripple table nor the invariant audit had produced.
 
+## The span-versus-trace comparison, which is the method that works
+
+The `openai-agents/image_gen` defect was found by comparing **span views against the trace view** —
+content present per span that vanishes at trace level. That comparison targets false equivalence
+directly, which is the class this document calls hardest to detect, and it had never been run
+systematically. Run over all 121 fixtures:
+
+**787 groups** appear on N spans and fewer than N times in their trace. Almost all are the product
+working: `langgraph/swarm` sends one user question to 135 generation spans, and collapsing that to one
+message is the whole point. So the raw count is not a defect list — the signal is in the exceptions.
+
+Two shapes stood out, and they have different verdicts:
+
+| Fixture | Shape | Verdict |
+| --- | --- | --- |
+| `openai-agents/image_gen` | three identical exceptions on three spans → **one** in the trace | **defect, fixed** (`416e7599`) |
+| `langgraph/tool_use` trace-4 | its user question present on 13 spans, **absent** from the trace view | the documented cross-trace limit — the question is byte-identical to trace-1's, so a genuine repeat is indistinguishable from a replay |
+| `strands-js/swarm` trace-1 | its user question present on **one** span, absent from the trace *and* the feed | **defect** — see below |
+
+### The narrowed check, and the defect it found
+
+A sharper question than "does content collapse": **does a populated trace view show a user turn, when
+its own spans carried one?** Corpus-wide that is true of exactly **two** traces, and one of them cannot
+be explained by cross-trace stripping.
+
+`strands-js/swarm` has a **single trace**. Its `chat` span holds `system, user, assistant, assistant`;
+the trace view holds `system, assistant, assistant, tool` and the feed holds
+`assistant, tool, assistant, system`. The user's request — *"Create a simple plan to build a weather
+app…"* — survives in one span view and nowhere else. A user opening that trace sees a plan and no
+request.
+
+The mechanism is history classification, and it is the same defect class as the rest of this document:
+**phase 1 marks a message history because its timestamp precedes the span's start**, which is true of
+*every input a span received*. That evidence cannot on its own separate "a previous turn re-sent as
+context" from "the question this span was asked". What saves the other frameworks is **redundancy** — the
+agent or root span carries the question too, as non-history, so the history copy has a survivor to
+collapse onto. Strands' swarm does not put the question on its agent span, so the only copy is the
+history-classified one, and the history-only filter drops it.
+
+That filter is deliberate and mostly right (it is what removes previous turns' content). What is wrong is
+treating "earlier than the span" as sufficient evidence on its own. The narrowest correct statement: a
+message classified as history **solely** by the timestamp phase, whose content appears nowhere else in
+the trace, is the span's input rather than a previous turn — and dropping it removes the only record of a
+turn that demonstrably happened.
+
+Not fixed here, deliberately: history classification is the most ripple-prone area in the pipeline, three
+of the four measured ripples in this document came from touching adjacent machinery, and this repair needs
+its own measurement pass. It is recorded as a **named, reproducible defect with a fixture**, which is the
+standard this document holds everything else to.
+
 ## The principle
 
 **Classify evidence, not messages.** The semantic unit is a *carrier instance* — a carrier

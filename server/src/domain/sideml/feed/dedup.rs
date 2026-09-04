@@ -256,6 +256,17 @@ pub(super) fn call_repeat_ordinals(blocks: &[BlockEntry]) -> Vec<u32> {
     // (trace, call id) -> that call's rank, for the results that answer it.
     let mut rank_by_call: HashMap<(&str, &str), u32> = HashMap::new();
 
+    // How many calls of one shape a single response lists, which is what decides *which* evidence
+    // separates two same-shaped calls - see `rank_scope`.
+    let mut shape_count: HashMap<ResponseKey<'_>, usize> = HashMap::new();
+    for block in blocks {
+        if let ContentBlock::ToolUse { name, input, .. } = &block.content {
+            *shape_count
+                .entry(response_scope(block, compute_tool_call_hash(name, input)))
+                .or_insert(0) += 1;
+        }
+    }
+
     for block in blocks {
         // Plain messages get an ordinal too, but only inside a carrier whose structure is evidence of
         // distinct occurrences - `gen_ai.choice`, `gen_ai.output.messages` and the other atomic emissions.
@@ -275,6 +286,7 @@ pub(super) fn call_repeat_ordinals(blocks: &[BlockEntry]) -> Vec<u32> {
                 &mut keys_by_response,
                 &mut rank_by_call,
                 id.as_deref(),
+                &shape_count,
             );
         } else if let Some(shape) = plain_message_shape(block) {
             let semantics = crate::domain::sideml::carrier::semantics_for(
@@ -282,7 +294,14 @@ pub(super) fn call_repeat_ordinals(blocks: &[BlockEntry]) -> Vec<u32> {
                 block.source_attribute.as_deref(),
             );
             if semantics.position_proves_distinct_occurrence {
-                record_position(block, shape, &mut keys_by_response, &mut rank_by_call, None);
+                record_position(
+                    block,
+                    shape,
+                    &mut keys_by_response,
+                    &mut rank_by_call,
+                    None,
+                    &shape_count,
+                );
             }
         }
     }
@@ -292,7 +311,7 @@ pub(super) fn call_repeat_ordinals(blocks: &[BlockEntry]) -> Vec<u32> {
         .map(|block| match &block.content {
             ContentBlock::ToolUse { id, name, input } => {
                 let shape = compute_tool_call_hash(name, input);
-                lookup_position(block, shape, &keys_by_response, id.as_deref())
+                lookup_position(block, shape, &keys_by_response, id.as_deref(), &shape_count)
             }
             ContentBlock::ToolResult { tool_use_id, .. } => tool_use_id
                 .as_deref()
@@ -311,7 +330,7 @@ pub(super) fn call_repeat_ordinals(blocks: &[BlockEntry]) -> Vec<u32> {
                 if !semantics.position_proves_distinct_occurrence {
                     return 0;
                 }
-                lookup_position(block, shape, &keys_by_response, None)
+                lookup_position(block, shape, &keys_by_response, None, &shape_count)
             }
         })
         .collect()
@@ -341,17 +360,27 @@ fn record_position<'a>(
     keys_by_response: &mut HashMap<ResponseKey<'a>, Vec<CallKey<'a>>>,
     rank_by_call: &mut HashMap<(&'a str, &'a str), u32>,
     id: Option<&'a str>,
+    shape_count: &HashMap<ResponseKey<'a>, usize>,
 ) {
     let key = call_key(block, id);
+    // An id-bearing call ranks across its **trace**, not within one response.
+    //
+    // Two executions of the same call in one trace arrive on different spans, and each span holds one
+    // of them - so a per-response rank gave both ordinal 0 and dedup merged them. Measured on
+    // `agent-framework/tool_use`: four executions with four distinct provider ids, two of them the same
+    // NYC request, came back as **three** calls beside **two** NYC answers. Same shape in
+    // `openai-agents/tool_use`, both `mcp_tools` suites and both `subagents` suites.
+    //
+    // The provider's id is what separates them, and it is trustworthy for this: a re-listing of one
+    // execution repeats the *same* id (which is why the copies across three spans still collapse), while
+    // a second execution gets a new one. The id is still not the *identity* - a history re-send may
+    // regenerate it - which is why it decides the rank rather than the key.
+    //
+    // Position keeps its job where no id was sent, and only there: two identical id-less calls of one
+    // response are otherwise indistinguishable, and ranking them across a trace would turn a snapshot's
+    // echo into a second call.
     let seen = keys_by_response
-        .entry((
-            block.trace_id.as_str(),
-            block.span_id.as_str(),
-            block.source_type.as_str(),
-            block.event_name.as_deref(),
-            block.source_attribute.as_deref(),
-            shape,
-        ))
+        .entry(rank_scope(block, shape, id, shape_count))
         .or_default();
     let rank = match seen.iter().position(|seen| *seen == key) {
         Some(position) => position as u32,
@@ -367,22 +396,50 @@ fn record_position<'a>(
     }
 }
 
+/// The scope a repeat rank is counted within - see the note in `record_position`. Defined once, because
+/// a recording site and a lookup site that disagree would silently rank everything zero.
+fn response_scope<'a>(block: &'a BlockEntry, shape: u64) -> ResponseKey<'a> {
+    (
+        block.trace_id.as_str(),
+        block.span_id.as_str(),
+        block.source_type.as_str(),
+        block.event_name.as_deref(),
+        block.source_attribute.as_deref(),
+        shape,
+    )
+}
+
+fn rank_scope<'a>(
+    block: &'a BlockEntry,
+    shape: u64,
+    id: Option<&'a str>,
+    shape_count: &HashMap<ResponseKey<'a>, usize>,
+) -> ResponseKey<'a> {
+    // Only a **non-history** call ranks trace-wide. A history re-send regenerates the id, so trusting
+    // it there would turn one execution's echo into a second execution - which
+    // `a_resent_pair_of_identical_calls_is_still_one_pair` and
+    // `test_same_tool_call_different_ids_deduped` pin, and which the captured corpus does not contain.
+    // The distinction is the one this whole document rests on: a re-send is not evidence of an
+    // occurrence, so its id is not evidence of a distinct one either.
+    let response = response_scope(block, shape);
+    let lists_shape_once = shape_count.get(&response).copied().unwrap_or(1) <= 1;
+    if id.is_some_and(|s| !s.is_empty()) && lists_shape_once {
+        (block.trace_id.as_str(), "", "", None, None, shape)
+    } else {
+        response
+    }
+}
+
 fn lookup_position<'a>(
     block: &'a BlockEntry,
     shape: u64,
     keys_by_response: &HashMap<ResponseKey<'a>, Vec<CallKey<'a>>>,
     id: Option<&'a str>,
+    shape_count: &HashMap<ResponseKey<'a>, usize>,
 ) -> u32 {
     let key = call_key(block, id);
     keys_by_response
-        .get(&(
-            block.trace_id.as_str(),
-            block.span_id.as_str(),
-            block.source_type.as_str(),
-            block.event_name.as_deref(),
-            block.source_attribute.as_deref(),
-            shape,
-        ))
+        .get(&rank_scope(block, shape, id, shape_count))
         .and_then(|seen| seen.iter().position(|seen| *seen == key))
         .map(|rank| rank as u32)
         .unwrap_or(0)
@@ -2281,18 +2338,31 @@ mod tests {
     }
 
     #[test]
-    fn test_same_tool_call_different_ids_deduped() {
-        // Same tool call (same name + input) with different call_ids should be deduplicated
+    fn two_executions_of_one_shape_on_their_own_spans_are_two_calls() {
+        // Two calls of the same shape, each on its own span, each with the provider's own id, are two
+        // **executions** - not one call seen twice.
+        //
+        // This test previously asserted the opposite, on the grounds that a history re-send regenerates
+        // ids. That reasoning is sound for a re-send and wrong here, and the corpus settled it:
+        // `agent-framework/tool_use` really does call `temperature_forecast{New York City, 3}` twice with
+        // two ids, and the trace showed **one** call beside **two** answers. Same shape in
+        // `openai-agents/tool_use`, both `mcp_tools` suites and both `subagents` suites - six fixtures.
+        //
+        // What separates the two cases is how many calls of the shape *one response* lists: two
+        // executions each list it once in their own emission, while a re-sent pair lists it twice in one
+        // emission, where position is the evidence and the ids are not.
+        // `a_resent_pair_of_identical_calls_is_still_one_pair` holds that other side.
         let t0 = utc(0);
 
-        // Two tool calls with SAME name+input but DIFFERENT IDs
         let tool1 = make_tool_use_block("trace1", "span1", "call_111", "search", t0);
         let tool2 = make_tool_use_block("trace1", "span2", "call_222", "search", t0);
 
-        // They should have the same identity (content-based)
-        let id1 = MessageIdentity::from_block(&tool1);
-        let id2 = MessageIdentity::from_block(&tool2);
-        assert_eq!(id1, id2);
+        // The *identity* is still content-based: the id decides the repeat rank, never the identity,
+        // because a re-send may regenerate it.
+        assert_eq!(
+            MessageIdentity::from_block(&tool1),
+            MessageIdentity::from_block(&tool2)
+        );
 
         // And should be deduplicated
         let span_timestamps = HashMap::from([
@@ -2313,7 +2383,11 @@ mod tests {
         ]);
 
         let result = process_dedup(vec![tool1, tool2], span_timestamps);
-        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.len(),
+            2,
+            "two executions with two provider ids must both survive"
+        );
     }
 
     #[test]
