@@ -700,8 +700,8 @@
     "trace-1": {
       "message_count": 35,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "tool",
@@ -741,19 +741,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Review the TypeScript files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check comments, then give me a combined two-bullet summary.",
-          "content_digest": "157c8623f0e2fbb2",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "Delegate the review work to your subagents, then summarize.",
           "content_digest": "41259dbfc833be94",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Review the TypeScript files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check comments, then give me a combined two-bullet summary.",
+          "content_digest": "157c8623f0e2fbb2",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -1036,8 +1036,8 @@
     "ef23255b-03de-4a42-a216-1dc2cfcc28ec": {
       "message_count": 35,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "tool",
@@ -1077,19 +1077,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Review the TypeScript files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check comments, then give me a combined two-bullet summary.",
-          "content_digest": "157c8623f0e2fbb2",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "Delegate the review work to your subagents, then summarize.",
           "content_digest": "41259dbfc833be94",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Review the TypeScript files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check comments, then give me a combined two-bullet summary.",
+          "content_digest": "157c8623f0e2fbb2",
+          "observation_type": "span"
         },
         {
           "index": 2,

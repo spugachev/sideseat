@@ -150,8 +150,8 @@
     "trace-1": {
       "message_count": 7,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "tool",
@@ -163,19 +163,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Using relative paths in the current directory, create notes.txt containing 'hello', then create secrets.txt containing 'token=abc123'. Report what happened for each.",
-          "content_digest": "ca6d7a77696b0b67",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a careful file assistant.",
           "content_digest": "da933aef5e68e44a",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Using relative paths in the current directory, create notes.txt containing 'hello', then create secrets.txt containing 'token=abc123'. Report what happened for each.",
+          "content_digest": "ca6d7a77696b0b67",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -226,8 +226,8 @@
     "ace418c4-3257-4a0f-aff5-0ae4c0af1a55": {
       "message_count": 7,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "tool",
@@ -239,19 +239,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Using relative paths in the current directory, create notes.txt containing 'hello', then create secrets.txt containing 'token=abc123'. Report what happened for each.",
-          "content_digest": "ca6d7a77696b0b67",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a careful file assistant.",
           "content_digest": "da933aef5e68e44a",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Using relative paths in the current directory, create notes.txt containing 'hello', then create secrets.txt containing 'token=abc123'. Report what happened for each.",
+          "content_digest": "ca6d7a77696b0b67",
+          "observation_type": "span"
         },
         {
           "index": 2,

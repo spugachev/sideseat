@@ -382,8 +382,8 @@
     "trace-1": {
       "message_count": 16,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "user",
@@ -404,19 +404,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "How many widgets and flanges are in stock?",
-          "content_digest": "0fd6ddf013dd19c3",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a warehouse assistant. Use the inventory tools for all lookups.",
           "content_digest": "e7381e8e903d37bd",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "How many widgets and flanges are in stock?",
+          "content_digest": "0fd6ddf013dd19c3",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -542,8 +542,8 @@
     "f6b7c7f9-4e43-4fce-9988-3cbc0484d71e": {
       "message_count": 16,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "user",
@@ -564,19 +564,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "How many widgets and flanges are in stock?",
-          "content_digest": "0fd6ddf013dd19c3",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a warehouse assistant. Use the inventory tools for all lookups.",
           "content_digest": "e7381e8e903d37bd",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "How many widgets and flanges are in stock?",
+          "content_digest": "0fd6ddf013dd19c3",
+          "observation_type": "span"
         },
         {
           "index": 2,

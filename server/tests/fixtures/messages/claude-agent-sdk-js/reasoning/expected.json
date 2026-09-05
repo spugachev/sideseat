@@ -118,8 +118,8 @@
     "trace-1": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "user",
         "assistant"
@@ -129,19 +129,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Three switches outside a room control three bulbs inside. You may flip switches freely but enter the room only once. How do you determine which switch controls which bulb?",
-          "content_digest": "5468af6e02aebb56",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "Think the problem through, then give a short final answer.",
           "content_digest": "3a7bc880979a8a4e",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Three switches outside a room control three bulbs inside. You may flip switches freely but enter the room only once. How do you determine which switch controls which bulb?",
+          "content_digest": "5468af6e02aebb56",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -174,8 +174,8 @@
     "9658fbbb-5584-4034-9f51-f78cc2c54d00": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "user",
         "assistant"
@@ -185,19 +185,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Three switches outside a room control three bulbs inside. You may flip switches freely but enter the room only once. How do you determine which switch controls which bulb?",
-          "content_digest": "5468af6e02aebb56",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "Think the problem through, then give a short final answer.",
           "content_digest": "3a7bc880979a8a4e",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Three switches outside a room control three bulbs inside. You may flip switches freely but enter the room only once. How do you determine which switch controls which bulb?",
+          "content_digest": "5468af6e02aebb56",
+          "observation_type": "span"
         },
         {
           "index": 2,

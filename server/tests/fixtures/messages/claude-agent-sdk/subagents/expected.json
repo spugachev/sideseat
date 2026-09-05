@@ -709,8 +709,8 @@
     "trace-1": {
       "message_count": 36,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant",
@@ -751,19 +751,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Review the Python files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check docstrings, then give me a combined two-bullet summary.",
-          "content_digest": "4df900492b391314",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "Delegate the review work to your subagents, then summarize.",
           "content_digest": "41259dbfc833be94",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Review the Python files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check docstrings, then give me a combined two-bullet summary.",
+          "content_digest": "4df900492b391314",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -1054,8 +1054,8 @@
     "4c71cfcb-fd47-4661-ae9b-868944a544d6": {
       "message_count": 36,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant",
@@ -1096,19 +1096,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Review the Python files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check docstrings, then give me a combined two-bullet summary.",
-          "content_digest": "4df900492b391314",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "Delegate the review work to your subagents, then summarize.",
           "content_digest": "41259dbfc833be94",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Review the Python files in this directory. Use the style-reviewer subagent to check naming and the docs-reviewer subagent to check docstrings, then give me a combined two-bullet summary.",
+          "content_digest": "4df900492b391314",
+          "observation_type": "span"
         },
         {
           "index": 2,

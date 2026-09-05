@@ -340,8 +340,8 @@
     "trace-1": {
       "message_count": 14,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "user",
@@ -360,19 +360,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Calculate an expression for me: What is 12345 plus 6789?",
-          "content_digest": "2f005e8714b6ca59",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You help users calculate expressions. Always use the calculate tool.",
           "content_digest": "5bee301c5d19774f",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Calculate an expression for me: What is 12345 plus 6789?",
+          "content_digest": "2f005e8714b6ca59",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -481,8 +481,8 @@
     "71fb2c4c-0338-405f-93a2-cd0a8da3fb9a": {
       "message_count": 14,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "user",
@@ -501,19 +501,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Calculate an expression for me: What is 12345 plus 6789?",
-          "content_digest": "2f005e8714b6ca59",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You help users calculate expressions. Always use the calculate tool.",
           "content_digest": "5bee301c5d19774f",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Calculate an expression for me: What is 12345 plus 6789?",
+          "content_digest": "2f005e8714b6ca59",
+          "observation_type": "span"
         },
         {
           "index": 2,

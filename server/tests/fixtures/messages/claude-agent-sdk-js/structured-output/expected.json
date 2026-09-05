@@ -88,8 +88,8 @@
     "trace-1": {
       "message_count": 3,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant"
       ],
       "tool_names": [],
@@ -97,19 +97,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Extract info: Jane Doe, a systems admin, 28, lives at 123 Main St, New York, USA. Email: jane@example.com",
-          "content_digest": "6a08cceee02e13c8",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are an information extraction assistant. Extract the person information from the provided text.",
           "content_digest": "69e38bb20daea1cf",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Extract info: Jane Doe, a systems admin, 28, lives at 123 Main St, New York, USA. Email: jane@example.com",
+          "content_digest": "6a08cceee02e13c8",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -127,8 +127,8 @@
     "44c38521-d29a-48b8-bdbe-09ef0460997c": {
       "message_count": 3,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant"
       ],
       "tool_names": [],
@@ -136,19 +136,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Extract info: Jane Doe, a systems admin, 28, lives at 123 Main St, New York, USA. Email: jane@example.com",
-          "content_digest": "6a08cceee02e13c8",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are an information extraction assistant. Extract the person information from the provided text.",
           "content_digest": "69e38bb20daea1cf",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Extract info: Jane Doe, a systems admin, 28, lives at 123 Main St, New York, USA. Email: jane@example.com",
+          "content_digest": "6a08cceee02e13c8",
+          "observation_type": "span"
         },
         {
           "index": 2,

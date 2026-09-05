@@ -385,8 +385,8 @@
     "trace-1": {
       "message_count": 16,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant",
@@ -407,19 +407,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "How many TypeScript files are in this directory? Use Glob.",
-          "content_digest": "232e1d0a4c8b1554",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a concise code explorer. Answer in one or two sentences.",
           "content_digest": "84cef8244185653d",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "How many TypeScript files are in this directory? Use Glob.",
+          "content_digest": "232e1d0a4c8b1554",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -544,8 +544,8 @@
     "d5d1ce03-8b0e-481a-b0cd-26117616469a": {
       "message_count": 16,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant",
@@ -566,19 +566,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "How many TypeScript files are in this directory? Use Glob.",
-          "content_digest": "232e1d0a4c8b1554",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a concise code explorer. Answer in one or two sentences.",
           "content_digest": "84cef8244185653d",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "How many TypeScript files are in this directory? Use Glob.",
+          "content_digest": "232e1d0a4c8b1554",
+          "observation_type": "span"
         },
         {
           "index": 2,

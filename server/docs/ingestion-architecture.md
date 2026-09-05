@@ -22,7 +22,7 @@ different levels of authorisation and nothing else says which is which.
 | **Plain-text generic I/O** | **landed** | maintain | — | `_synthetic/plain_text_generic_io` |
 | **Resolver authority** — one order, `legacy_rank` opaque, feed consumes it | **approved** | build | — | byte-identical corpus output |
 | **SCC condensation and a degradation signal** | **approved** | build | resolver authority | a constructed cycle is reported, not silently broken |
-| **The request-scoped framing edge** | **approved** | build, shadow, promote | resolver authority | the 27-view ratchet empties |
+| **The request-scoped framing edge** | **landed** for the mechanism it covers: 16 of 22 fixtures (both Claude SDK suites), whose frame and turn meet on one generation span. LangGraph (fragmented array carriers) and `strands/swarm` (frame and turn on different spans, no request link) are different mechanisms and stay in the ratchet | maintain | — | the gap list holds the two open mechanisms bidirectionally |
 | **Instrumentation scope + carrier provenance persistence** | **approved** | build | — | a scope-keyed rule becomes expressible |
 | **Compact read envelope, stage 0R** | **approved** | build | — | the three already-loaded facts become reachable |
 | **Data classes and the `framework_config` rule** | **approved** | build | provenance | the sentinel-token test |
@@ -441,6 +441,31 @@ The narrowest fix keeps exactly one witness: in the child-generation rule, prese
 witness when its timestamp is at or after its generation span's start **and** no non-history equivalent
 exists in the trace. Every other child copy stays history, the timestamp rule is untouched, and no
 previous turn can be resurrected — a genuine re-send predates the span it was sent to.
+
+### The framing edge, landed — and what its regression taught
+
+Review 21 split the 22-fixture defect into **three mechanisms**, and the edge fixes the largest:
+
+| Mechanism | Fixtures | Status |
+| --- | --- | --- |
+| frame and turn meet on one generation span (`user_system_prompt` beside `new_context`) | 16 — both Claude SDK suites | **fixed** by `request_framing_edges` |
+| the frame arrives *inside* an ordered array that extraction fragments into per-index carriers (`llm.input_messages.N.message` interns as N carriers), so no sequence edge survives | 5 — langgraph | open; the repair is carrier-family canonicalisation at extraction, separately gated |
+| frame on the agent span, turn on the orchestrator span, nothing linking them to one request | 1 — `strands/swarm` | open; blocked on a request-membership locator that ancestry alone cannot supply for parallel branches |
+
+The fact is the **carrier's** (`carrier_is_detached_request_frame`: `gen_ai.system_instructions`,
+`user_system_prompt`, `system_prompt`) — never the role's, since `developer` normalises to System and an
+in-band system message is a turn in its array. `gen_ai.system.message` is deliberately not marked: an
+event in a conversation stream may be a turn.
+
+**The first implementation regressed, and the regression is the specification.** Framing *every* input
+of the request dragged `agent-framework/swarm`'s four handoff instructions to the front of the trace,
+because "the frame precedes this input" is true within one request's payload and **false as a global
+statement about a replay** — the replayed question's surviving occurrence belongs to the turn that first
+asked it. So a frame precedes only what its request saw **first**: an input already listed by an earlier
+request belongs to that turn, and an earlier generation's *output* precedes this frame by conversation
+order however this request re-consumed it. With those two exclusions the corpus delta was exactly the 16
+Claude fixtures, `agent-framework/swarm` untouched, and the four scope-falsifying fixtures
+(`adk/image_gen`, `adk/reasoning`, `anthropic/session`, ADK's single carrier) byte-identical.
 
 **Fixed**, and the acceptance condition was met exactly: the corpus delta is `strands-js/swarm` alone,
 trace and feed each gaining the turn, every span view unchanged. The first attempt did ripple — rescuing

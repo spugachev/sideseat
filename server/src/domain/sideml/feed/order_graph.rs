@@ -95,6 +95,10 @@ pub(super) struct OrderEvidence {
     is_output: bool,
     /// The span is a generation - a model call, so its input caused its output.
     from_generation: bool,
+    /// The observation came from a *detached request frame* carrier - the system instruction a
+    /// generation was given, reported beside the conversation. A carrier fact, never a role fact:
+    /// see `CarrierSemantics::carrier_is_detached_request_frame`.
+    detached_frame: bool,
 }
 
 /// Reduce the classified, pre-dedup blocks to what the resolver reads.
@@ -156,6 +160,7 @@ pub(super) fn collect_order_evidence(
                 carrier_ordered: semantics.position_provides_sequence_order && !block.is_history,
                 is_output: block.is_output_source(),
                 from_generation: block.is_generation_span(),
+                detached_frame: semantics.carrier_is_detached_request_frame,
             }
         })
         .collect()
@@ -461,6 +466,22 @@ pub(super) struct Constraints {
     /// "the terminal assistant message follows the last user message and every intervening tool" says
     /// something similar and is false for parallel branches, subagents, retries and abandoned calls.
     pub generation_dataflow_edges: bool,
+    /// Enforce that a *detached request frame* precedes every other input of the request that carried
+    /// it.
+    ///
+    /// The one confirmed ordering defect: a framework reports the instruction on the span that sent it -
+    /// the generation span - while the question arrived on an orchestration span that started earlier,
+    /// so ordering by evidence time put the frame after the question. Two scalar repairs failed,
+    /// measured (one tripped `assert_carrier_subsequence` on ADK, the other moved 15 feed views and
+    /// repaired nothing), because "before" here is a constraint, not a position.
+    ///
+    /// The request is the generation span that carried the frame, and the edge is drawn to the other
+    /// *input* units of that same span, projected through lineage - so the surviving copy of the
+    /// question, wherever it sits, inherits the edge. Scoped to one request, deliberately: a trace
+    /// legitimately holds several instructions (`adk/reasoning` repeats one at three request
+    /// boundaries; `adk/image_gen` changes it mid-trace), and any wider scope is falsified by a
+    /// committed fixture.
+    pub request_framing_edges: bool,
 }
 
 impl Constraints {
@@ -478,6 +499,7 @@ impl Constraints {
         source_position_member_order: false,
         carrier_sequence_edges: false,
         generation_dataflow_edges: false,
+        request_framing_edges: false,
     };
 
     /// What production enforces today.
@@ -542,6 +564,7 @@ impl Constraints {
         source_position_member_order: true,
         carrier_sequence_edges: true,
         generation_dataflow_edges: true,
+        request_framing_edges: true,
     };
 
     /// Every constraint enforced - the redesign's intended answer.
@@ -554,6 +577,7 @@ impl Constraints {
         source_position_member_order: true,
         carrier_sequence_edges: true,
         generation_dataflow_edges: true,
+        request_framing_edges: true,
     };
 }
 
@@ -996,6 +1020,99 @@ pub(super) fn resolve(
         }
     }
 
+    // Request framing: a detached frame precedes the inputs *first seen* in its own request.
+    //
+    // A framework reports the system instruction on the span that *sent* it - the generation span -
+    // while the question arrived on an orchestration span that started earlier, so ordering by evidence
+    // time put the frame after the question. 27 trace views across 22 fixtures, every one displaced by
+    // exactly one position (`a_system_instruction_precedes_the_first_user_turn`).
+    //
+    // The request is the generation span that carried the frame; the fact is the carrier's
+    // (`carrier_is_detached_request_frame`), never the role's, since `developer` normalises to System
+    // and an in-band system message is a turn in its array. Both sides derive from *all* pre-dedup
+    // observations projected through lineage, like the dataflow class above, so the surviving copy of
+    // the question inherits the edge wherever it sits - reading the survivor's own span instead would
+    // let a quality tie decide which request gets the edge, which
+    // `which_copy_survives_does_not_change_the_order` forbids.
+    //
+    // Two exclusions on the target side, and the first was learned from a regression rather than
+    // deduced. "The frame precedes this input" is true *within one request's payload* and false as a
+    // global statement about a replay: `agent-framework/swarm` hands the conversation through four
+    // agents, each re-sending it under a new instruction, and framing every input dragged all four
+    // instructions to the front of the trace. So a frame precedes only what its request saw **first** -
+    // an input already listed by an earlier request belongs to that turn, and an earlier generation's
+    // *output* precedes this frame by conversation order however this request re-consumed it.
+    if constraints.request_framing_edges {
+        let mut frames_by_span: HashMap<usize, BTreeSet<usize>> = HashMap::new();
+        let mut inputs_by_span: HashMap<usize, BTreeSet<usize>> = HashMap::new();
+        let mut generation_outputs: BTreeSet<usize> = BTreeSet::new();
+        let mut span_first_effective: HashMap<usize, DateTime<Utc>> = HashMap::new();
+        for (observation, seen) in evidence.iter().enumerate() {
+            if !seen.from_generation {
+                continue;
+            }
+            let Some(survivor) = survivor_of(observation) else {
+                continue;
+            };
+            let unit = unit_of[survivor];
+            if seen.is_output {
+                generation_outputs.insert(unit);
+                continue;
+            }
+            span_first_effective
+                .entry(seen.span)
+                .and_modify(|t| {
+                    if seen.effective < *t {
+                        *t = seen.effective;
+                    }
+                })
+                .or_insert(seen.effective);
+            let side = if seen.detached_frame {
+                &mut frames_by_span
+            } else {
+                &mut inputs_by_span
+            };
+            side.entry(seen.span).or_default().insert(unit);
+        }
+        // Requests in the order they happened, so "first seen" is well defined; the span id breaks a
+        // timestamp tie deterministically.
+        let mut requests: Vec<usize> = frames_by_span
+            .keys()
+            .chain(inputs_by_span.keys())
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        requests.sort_by_key(|span| (span_first_effective.get(span).copied(), *span));
+
+        let mut already_seen: BTreeSet<usize> = BTreeSet::new();
+        for span in requests {
+            let inputs = inputs_by_span.get(&span).cloned().unwrap_or_default();
+            if let Some(frames) = frames_by_span.get(&span) {
+                for &frame in frames {
+                    for &input in &inputs {
+                        if frames.contains(&input)
+                            || generation_outputs.contains(&input)
+                            || already_seen.contains(&input)
+                        {
+                            continue;
+                        }
+                        add_edge(
+                            frame,
+                            input,
+                            constraints,
+                            &unit_min_legacy,
+                            &mut successors,
+                            &mut indegree,
+                            &mut edges,
+                        );
+                    }
+                }
+            }
+            already_seen.extend(inputs);
+        }
+    }
+
     // Kahn's algorithm, popping the ready unit with the smallest (priority, min-legacy, unit-id).
     // On a stall - a cycle - break it deterministically by the same key over the remaining units,
     // so the resolver is total rather than panicking. (Full SCC condensation is a later increment;
@@ -1227,6 +1344,7 @@ mod cycle_tests {
             carrier_ordered: true,
             is_output: false,
             from_generation: false,
+            detached_frame: false,
         }
     }
 

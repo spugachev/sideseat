@@ -49,6 +49,16 @@ pub struct CarrierSemantics {
     /// of "input precedes output". Deriving that side by negating an inferred flag made it read a tool
     /// answer as a precondition of the call that produced it.
     pub carrier_holds_span_output: bool,
+    /// The carrier is a *detached request frame*: the system instruction a generation was given,
+    /// reported beside the conversation rather than inside it.
+    ///
+    /// This is a fact about the carrier, deliberately not about the role. `developer` normalises to
+    /// `System`, and a system message *inside* an ordered array is a turn in that array, framed by its
+    /// position - `adk/image_gen`'s second instruction legitimately sits mid-trace at index 9. Only the
+    /// detached carriers assert "this precedes every other input of the request that carried me", which
+    /// is the edge the ordering resolver builds from it: a frame is not a turn that happened after the
+    /// question, it is the frame the request was made in.
+    pub carrier_is_detached_request_frame: bool,
 }
 
 impl CarrierSemantics {
@@ -59,6 +69,7 @@ impl CarrierSemantics {
         carrier_is_atomic_emission: true,
         carrier_may_contain_history_or_state: false,
         carrier_holds_span_output: true,
+        carrier_is_detached_request_frame: false,
     };
 
     /// A conversation as one span saw it: ordered, may repeat earlier turns, and a repeat inside it
@@ -69,6 +80,7 @@ impl CarrierSemantics {
         carrier_is_atomic_emission: false,
         carrier_may_contain_history_or_state: true,
         carrier_holds_span_output: false,
+        carrier_is_detached_request_frame: false,
     };
 
     /// Framework state that happens to contain messages - LangChain's `output.value`, an agent's
@@ -82,6 +94,7 @@ impl CarrierSemantics {
         carrier_is_atomic_emission: false,
         carrier_may_contain_history_or_state: true,
         carrier_holds_span_output: true,
+        carrier_is_detached_request_frame: false,
     };
 }
 
@@ -163,14 +176,21 @@ pub fn declared_semantics(
             if key.starts_with("gen_ai.input.messages")
                 || key.starts_with("llm.input_messages")
                 || key.starts_with("ai.prompt")
-                // The system prompt a model was given, under each framework's name for it.
-                || key == "gen_ai.system_instructions"
-                || key == "user_system_prompt"
                 // Logfire's request payload, and the Claude Code CLI's turns and tool results.
                 || key == "request_data"
                 || key == "new_context" =>
         {
             CarrierSemantics::SNAPSHOT
+        }
+        // The system prompt a model was given, under each framework's name for it: semconv's,
+        // the Claude Code CLI's, and Strands'. Received like a snapshot, and additionally a
+        // *detached request frame* - see the field's own comment. `gen_ai.system.message` is
+        // deliberately not here: an event in a conversation stream is in-band, and may be a turn.
+        Some("gen_ai.system_instructions") | Some("user_system_prompt") | Some("system_prompt") => {
+            CarrierSemantics {
+                carrier_is_detached_request_frame: true,
+                ..CarrierSemantics::SNAPSHOT
+            }
         }
         // A tool span's own pair: it was handed the arguments and it produced the result. One emission
         // each - a tool is called once - differing only in direction, which is the clearest case for

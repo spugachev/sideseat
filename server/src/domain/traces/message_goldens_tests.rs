@@ -2012,20 +2012,17 @@ const REORDERS_UNDER_PER_CARRIER: &[(&str, &str)] = &[];
 /// Also deliberately not keyed on `role == System`: `developer` normalises to `System`, and an in-band
 /// system message inside an ordered array is a turn in that array rather than a frame. Comparing firsts
 /// sidesteps that too, where a general rule would have to distinguish them.
-/// 27 trace views across 22 fixtures, and every one of them is `system@1, user@0` - the frame is
-/// displaced by exactly one position, never more. One cause, one fix.
+/// What remains after the request-framing edge landed: the two suites whose mechanism it does not
+/// cover. The Claude SDK entries (16 of the original 22 fixtures) were removed when the edge fixed
+/// them - their frame and their turn meet on one generation span, which is what the edge needs.
+/// LangGraph's frame arrives *inside* an ordered array that extraction fragments into per-index
+/// carriers, so no sequence edge survives to order it; `strands/swarm` reports its frame on the agent
+/// span while the turn sits on the orchestrator, and nothing links the two to one request. Different
+/// mechanisms, different repairs, both still open.
 const SYSTEM_FRAME_GAP: &[(&str, &str)] = &[
     (
         "langgraph/",
         "instruction on the generation span, question on the chain span that started earlier",
-    ),
-    (
-        "claude-agent-sdk/",
-        "user_system_prompt is reported on the generation span; the turn arrives on an earlier span",
-    ),
-    (
-        "claude-agent-sdk-js/",
-        "same as the Python SDK - the two agree exactly, including on this",
     ),
     (
         "strands/swarm",

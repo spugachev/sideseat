@@ -154,8 +154,8 @@
     "trace-1": {
       "message_count": 7,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "user",
         "assistant",
@@ -167,19 +167,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "What is the capital of France?",
-          "content_digest": "a5c958afb009ef20",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a concise geography assistant. Answer in one sentence.",
           "content_digest": "e9cfc7e71e62e71b",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "What is the capital of France?",
+          "content_digest": "a5c958afb009ef20",
+          "observation_type": "span"
         },
         {
           "index": 2,
@@ -228,8 +228,8 @@
     "073a7b92-f03e-4f70-910d-e746a559ba0b": {
       "message_count": 7,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "user",
         "assistant",
@@ -241,19 +241,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "What is the capital of France?",
-          "content_digest": "a5c958afb009ef20",
-          "observation_type": "span"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a concise geography assistant. Answer in one sentence.",
           "content_digest": "e9cfc7e71e62e71b",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "What is the capital of France?",
+          "content_digest": "a5c958afb009ef20",
+          "observation_type": "span"
         },
         {
           "index": 2,
