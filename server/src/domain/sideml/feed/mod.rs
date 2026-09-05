@@ -138,7 +138,7 @@ mod history;
 // The order resolver of the reconstruction redesign. Production runs `Constraints::PRODUCTION`; the
 // all-off `Constraints::NEUTRAL` is provably unable to move a block and is what the neutrality
 // property test checks, so the machinery stays verifiable as classes are promoted one at a time.
-mod order_graph;
+pub(crate) mod order_graph;
 #[cfg(test)]
 mod props;
 mod types;

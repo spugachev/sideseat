@@ -3590,3 +3590,73 @@ fn a_reported_occurrence_reaches_the_trace() {
         violations.join("\n  ")
     );
 }
+
+/// The fixtures whose ordering evidence contradicts itself, pinned in both directions.
+///
+/// A cycle means two constraint classes disagree about a pair of blocks, and the resolver breaks it
+/// deterministically toward the legacy order - which is a *guess*, warned about in production and,
+/// until this test, invisible in the suite (the golden tests install no tracing subscriber, so the
+/// `warn!` reached nobody). The code claimed "no corpus fixture cycles at this constraint density";
+/// measuring found two fixtures that always did.
+///
+/// Both currently produce byte-correct output, because the deterministic release lands on the legacy
+/// order and the goldens bless it - so a cycle here is a contradiction in the *evidence*, not yet a
+/// wrong answer. The list is bidirectional for the same reason every list in this file is: a new
+/// cycling fixture must be examined rather than silently guessed into order, and a fixture that stops
+/// cycling means a constraint class changed and this entry no longer measures anything.
+const EVIDENCE_CONTRADICTS_ITSELF: &[(&str, &str)] = &[
+    (
+        "_synthetic/repeated_tool_result_parts",
+        "a genuinely repeated identical result part: the emission's own order and the repeat's \
+         identity pull opposite ways",
+    ),
+    (
+        "adk/tool_use",
+        "parallel calls whose llm_request replay lists them in one order and correlation answers \
+         them in another",
+    ),
+];
+
+/// Cycles are contradictions, and a contradiction is examined, never silently guessed into order.
+#[test]
+fn ordering_contradictions_are_pinned() {
+    let fixtures = discover_fixtures();
+    if fixtures.is_empty() {
+        eprintln!("cycles: no fixtures - skipping");
+        return;
+    }
+    let pricing = PricingService::init_for_test().expect("offline pricing service");
+    let mut cycling: Vec<String> = Vec::new();
+    for (label, paths) in &fixtures {
+        let rows = rows_for_mode(&pricing, paths, ExtractionMode::PerCarrier);
+        crate::domain::sideml::feed::order_graph::CYCLES_BROKEN_IN_TESTS
+            .with(|c| *c.borrow_mut() = 0);
+        let _ = build_golden(label, paths, &rows);
+        let n =
+            crate::domain::sideml::feed::order_graph::CYCLES_BROKEN_IN_TESTS.with(|c| *c.borrow());
+        if n > 0 {
+            cycling.push(label.clone());
+        }
+    }
+
+    let unexpected: Vec<&String> = cycling
+        .iter()
+        .filter(|l| !EVIDENCE_CONTRADICTS_ITSELF.iter().any(|(f, _)| l == f))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "ordering evidence contradicts itself in a fixture not on the pinned list - the resolver is \
+         guessing there, and the guess must be examined:\n  {}",
+        unexpected
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+    for (fixture, reason) in EVIDENCE_CONTRADICTS_ITSELF {
+        assert!(
+            cycling.iter().any(|l| l == fixture),
+            "{fixture} no longer cycles ({reason}) - a constraint class changed; remove the entry"
+        );
+    }
+}

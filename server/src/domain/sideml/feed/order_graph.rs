@@ -60,6 +60,15 @@ type PopKey = (Option<DateTime<Utc>>, usize, usize);
 /// those are different payloads.
 type PayloadKey<'a> = (&'a str, Option<&'a str>, Option<&'a str>, String);
 
+// How many cycles the resolver broke, visible to tests: the `warn!` below reaches production
+// telemetry, and tests install no subscriber, so without this a contradiction in the evidence is
+// invisible exactly where the corpus could catch it.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CYCLES_BROKEN_IN_TESTS: std::cell::RefCell<usize> =
+        const { std::cell::RefCell::new(0) };
+}
+
 /// The synthetic node standing for "everything this span received precedes everything it produced".
 ///
 /// Numbered past the real units so it cannot collide with one, and it emits no blocks - it exists only
@@ -158,14 +167,22 @@ pub(super) fn collect_order_evidence(
                     .entry((block.span_id.clone(), emission_scope(block)))
                     .or_insert(next)
             });
-            // Only OpenInference's fragmented array for now, deliberately. The rule generalises in
-            // principle to every ordered input family, and broadening it to Vercel's `ai.prompt`
-            // regressed a sequential two-step trace, measured: request 2's array lists
-            // `call1, result1` and its first-seen sequencing pulled the second step's call ahead of
-            // the first step's result - `call1, result1, call2, result2` became
-            // `call1, call2, result1, result2`, which misrepresents the causality the old order
-            // showed. Each further family needs its own measured pass, exactly like every other
-            // promotion in this module.
+            // Two fragmented input families, each measured on its own, deliberately not every ordered
+            // input carrier. Broadening to Vercel's `ai.prompt` regressed a sequential two-step
+            // trace, measured: request 2's array lists `call1, result1` and its first-seen
+            // sequencing pulled the second step's call ahead of the first step's result -
+            // `call1, result1, call2, result2` became `call1, call2, result1, result2`, which
+            // misrepresents the causality the old order showed. Each further family needs its own
+            // measured pass, exactly like every other promotion in this module.
+            //
+            // The event-stream form of the same fragmentation (`gen_ai.system.message`,
+            // `gen_ai.user.message` interning apart on one generation span) was implemented and
+            // reverted: it fired thousands of forward no-op edges, created no new cycles, and fixed
+            // nothing - for `strands/swarm`, the one case it was aimed at, the target does not exist
+            // as an orderable unit. Strands rewrites the question before the model sees it
+            // (`Context: User Request: ...`), so no identity links the surviving question to any
+            // request, and the wrapped copy is correctly filtered as a context echo. A constraint
+            // class with no measured repair is surface without benefit.
             let ordered_input = block.is_generation_span()
                 && semantics.position_provides_sequence_order
                 && !semantics.carrier_holds_span_output
@@ -1254,6 +1271,8 @@ pub(super) fn resolve(
             // result is still a total order.
             None => {
                 cycles_broken += 1;
+                #[cfg(test)]
+                CYCLES_BROKEN_IN_TESTS.with(|c| *c.borrow_mut() += 1);
                 remaining
                     .iter()
                     .next()
