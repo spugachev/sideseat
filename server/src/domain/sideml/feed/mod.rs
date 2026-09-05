@@ -734,9 +734,9 @@ fn classify_span_blocks(
     (blocks, span_timestamps, replay_matching_complete)
 }
 
-/// The shadow resolver's order over one trace's blocks — the redesign's partial-order timeline,
-/// built from the same evidence and survivors production uses, but consumed by nothing yet. Tests
-/// assert it derives orders the scalar sort key gets wrong.
+/// The resolver's order over one trace's blocks under a chosen constraint set — what production runs
+/// (it is the ordering authority for all four views now), exposed so tests can compare constraint
+/// sets against each other.
 /// Stage timings for one trace's pipeline, for the performance bench.
 #[cfg(test)]
 pub(crate) fn stage_timings(rows: Vec<MessageSpanRow>) -> Vec<(&'static str, std::time::Duration)> {
@@ -943,10 +943,11 @@ fn reconstruct_trace(
 
     // Stage 6.6: Resolve the order as a partial order rather than a scalar key.
     //
-    // Under `SCAFFOLD` this cannot move a block - it enforces only the constraints the sort above
-    // already satisfies - so it is live and exercised on every request while the answer stays exactly
-    // what it was. `the_scaffold_reproduces_the_existing_order` holds it to that across the corpus.
-    // Runs after id withdrawal so the call/result edges see the ids the view will actually show.
+    // This is the ordering authority: `Constraints::PRODUCTION` names exactly which classes may
+    // change the answer, `NEUTRAL` provably cannot move a block
+    // (`the_neutral_resolver_reproduces_the_legacy_order`), and promotions happen one class at a
+    // time with a reviewed corpus delta. Runs after id withdrawal so the call/result edges see the
+    // ids the view will actually show.
     // The transcript: survivors as reconstruction established them, before any presentation choice.
     let transcript = blocks.clone();
 

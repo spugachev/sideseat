@@ -27,17 +27,12 @@
 //!   emission. Contiguity cannot be a pairwise edge — a DAG says `A < B`, never "nothing between A
 //!   and B" — so an emission becomes a single node and external edges attach to its boundary.
 //!
-//! # Constraints built so far
+//! # Constraint classes
 //!
-//! Only the two highest-confidence classes, which is all the `strands-js/swarm` case needs:
-//!
-//! 1. **Atomic-emission contraction**: identities emitted together by one `gen_ai.choice` instance
-//!    are one unit, ordered by their source position.
-//! 2. **Exact call → result**: a unit holding a tool result follows the unit holding its call, when
-//!    the call id is unambiguous among survivors.
-//!
-//! Generation input→output and snapshot-sequence edges are the next classes to add; they are
-//! deliberately absent here. Credible time is a **priority** for the topological pop, never an edge.
+//! See [`Constraints`] for the full list and what each was measured to change: atomic-emission
+//! contraction, exact call → result, carrier sequence, generation dataflow, request framing, and the
+//! fragmented ordered-input family. Credible time is a **priority** for the topological pop, never an
+//! edge.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -482,10 +477,9 @@ pub(super) fn causal_precedence(
 
 /// Which constraints the resolver is allowed to *change the answer* with.
 ///
-/// This is the promotion dial for the redesign. `SCAFFOLD` builds the whole graph and runs the whole
-/// resolve, but enforces only what the existing order already satisfies, so its output is provably
-/// the existing order — that is what lets the machinery go into production before any behaviour
-/// changes.
+/// This is the promotion dial. `NEUTRAL` builds the whole graph and runs the whole resolve while
+/// enforcing nothing, so its output is provably the legacy order — the proof that the machinery
+/// cannot move anything on its own, kept checkable as classes are promoted.
 ///
 /// One field per behaviour, deliberately: promoting a class means flipping *one* of them, so the
 /// resulting golden delta is attributable to that class alone. A single bundled flag turned all four
@@ -765,6 +759,14 @@ pub(super) fn resolve(
     // anchor. Only a credible emission counts as evidence of a time (a re-listed snapshot's time is
     // when it was assembled), with the survivor's own effective time as the fallback where an
     // identity has no emission at all - a user message read from an attribute array, say.
+    //
+    // The fallback is the minimum effective time over **every observation** projected to the unit,
+    // never the chosen survivor's alone. The survivor's copy is picked by quality and rescue rules
+    // that legitimately change - the history rescue keeps the *earliest* candidate today, and a rule
+    // change there must not move an unrelated block. With two identical user copies at t=10 and t=30
+    // and an unrelated credible unit at t=20, reading the survivor's time put the user before or
+    // after it depending on which copy was rescued; the minimum over both is the same fact whichever
+    // copy wins.
     let mut unit_priority: HashMap<usize, DateTime<Utc>> = HashMap::new();
     let record = |unit: usize, time: DateTime<Utc>, map: &mut HashMap<usize, DateTime<Utc>>| {
         map.entry(unit)
@@ -776,13 +778,15 @@ pub(super) fn resolve(
             .or_insert(time);
     };
     let mut from_emission: HashMap<usize, DateTime<Utc>> = HashMap::new();
+    let mut from_any_observation: HashMap<usize, DateTime<Utc>> = HashMap::new();
     for (observation, seen) in evidence.iter().enumerate() {
-        if !seen.credible {
-            continue;
-        }
         let Some(survivor) = survivor_of(observation) else {
             continue;
         };
+        record(unit_of[survivor], seen.effective, &mut from_any_observation);
+        if !seen.credible {
+            continue;
+        }
         record(unit_of[survivor], seen.effective, &mut from_emission);
     }
     for (i, block) in survivors.iter().enumerate() {
@@ -790,6 +794,7 @@ pub(super) fn resolve(
         let time = from_emission
             .get(&unit)
             .copied()
+            .or_else(|| from_any_observation.get(&unit).copied())
             .unwrap_or_else(|| effective_timestamp(block, span_timestamps));
         unit_priority
             .entry(unit)
@@ -1238,8 +1243,9 @@ pub(super) fn resolve(
 
     // Kahn's algorithm, popping the ready unit with the smallest (priority, min-legacy, unit-id).
     // On a stall - a cycle - break it deterministically by the same key over the remaining units,
-    // so the resolver is total rather than panicking. (Full SCC condensation is a later increment;
-    // no corpus fixture cycles at this constraint density.)
+    // so the resolver is total rather than panicking. (Full SCC condensation is a later increment.
+    // Two corpus fixtures *do* cycle - `ordering_contradictions_are_pinned` holds the set - and
+    // both land on the correct order under this release rule.)
     let mut order: Vec<usize> = Vec::with_capacity(units.len());
     // Two ordered sets rather than a rescan. The loop used to look at every unit on every iteration
     // to find the ready ones, which is quadratic in the number of units - and a session view can hold

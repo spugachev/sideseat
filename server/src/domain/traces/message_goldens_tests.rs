@@ -2843,16 +2843,13 @@ fn carrier_semantics_are_declared() {
     // Carriers the corpus contains that are knowingly left on the cautious default. Each one is a
     // decision, not an oversight: the reading is "a conversation as this span saw it", which can
     // under-report but never invent, and the answer invariant would catch under-reporting.
+    // The mlflow and traceloop entries this list used to carry were removed by the membership check
+    // below: no fixture exercises those carriers, so the exemptions excused nothing - and if a capture
+    // ever arrives, failing loudly with "undeclared" is the correct prompt to classify them.
     const KNOWN_DEFAULTED: &[&str] = &[
         "attr:gcp.vertex.agent.llm_request",
         "attr:gcp.vertex.agent.llm_response",
-        "attr:mlflow.spanInputs",
-        "attr:mlflow.spanOutputs",
-        "attr:traceloop.entity.input",
-        "attr:traceloop.entity.output",
         "attr:response_data",
-        "attr:system_prompt",
-        "attr:crewai.crew.tasks_output",
     ];
 
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -2891,6 +2888,26 @@ fn carrier_semantics_are_declared() {
          cautious reading is right for it.",
         undeclared.join("\n  ")
     );
+
+    // Both directions, like every list in this file: an entry that has since been *declared* is a
+    // contradiction - the table says one thing and this list says another - and it sat unnoticed for a
+    // whole review cycle when `system_prompt` became a declared frame carrier while still listed here
+    // as unclassified.
+    for entry in KNOWN_DEFAULTED {
+        let declared = match entry.strip_prefix("event:") {
+            Some(event) => declared_semantics(Some(event), None),
+            None => declared_semantics(None, entry.strip_prefix("attr:")),
+        };
+        assert!(
+            declared.is_none(),
+            "{entry} is declared in `sideml::carrier` and still listed in KNOWN_DEFAULTED - remove \
+             the entry"
+        );
+        assert!(
+            seen.contains(*entry),
+            "{entry} no longer occurs in the corpus - a dead exemption excuses nothing; remove it"
+        );
+    }
 }
 
 /// Which copy of a message survives deduplication must not change the *order* of the answer.
