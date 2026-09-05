@@ -1186,10 +1186,13 @@ pub(super) fn resolve(
                     let mut members = families[family].clone();
                     members.sort_unstable();
                     let mut sequence: Vec<usize> = Vec::new();
+                    // A set beside the vector, because `Vec::contains` made this quadratic in the
+                    // array's unique members and a replaying array re-lists the whole conversation.
+                    let mut in_sequence: BTreeSet<usize> = BTreeSet::new();
                     for (_, _, unit) in members {
                         if already_seen.contains(&unit)
                             || generation_outputs.contains(&unit)
-                            || sequence.contains(&unit)
+                            || !in_sequence.insert(unit)
                         {
                             continue;
                         }
