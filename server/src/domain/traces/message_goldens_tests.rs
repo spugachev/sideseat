@@ -2012,23 +2012,17 @@ const REORDERS_UNDER_PER_CARRIER: &[(&str, &str)] = &[];
 /// Also deliberately not keyed on `role == System`: `developer` normalises to `System`, and an in-band
 /// system message inside an ordered array is a turn in that array rather than a frame. Comparing firsts
 /// sidesteps that too, where a general rule would have to distinguish them.
-/// What remains after the request-framing edge landed: the two suites whose mechanism it does not
-/// cover. The Claude SDK entries (16 of the original 22 fixtures) were removed when the edge fixed
-/// them - their frame and their turn meet on one generation span, which is what the edge needs.
-/// LangGraph's frame arrives *inside* an ordered array that extraction fragments into per-index
-/// carriers, so no sequence edge survives to order it; `strands/swarm` reports its frame on the agent
-/// span while the turn sits on the orchestrator, and nothing links the two to one request. Different
-/// mechanisms, different repairs, both still open.
-const SYSTEM_FRAME_GAP: &[(&str, &str)] = &[
-    (
-        "langgraph/",
-        "instruction on the generation span, question on the chain span that started earlier",
-    ),
-    (
-        "strands/swarm",
-        "the swarm's request arrives on its orchestrator span, the planner's prompt on the agent span",
-    ),
-];
+/// One entry left of the original 22 fixtures. The Claude SDK's 16 were fixed by the request-framing
+/// edge (frame and turn meet on one generation span); langgraph's 5 by ordered-input array sequencing
+/// (its frame arrives *inside* `llm.input_messages`, which extraction fragments into per-index
+/// carriers - the resolver re-groups the family and orders its first-seen members). `strands/swarm`
+/// reports its frame on the agent span while the turn sits on the orchestrator span, and linking the
+/// two needs a request-membership locator that ancestry cannot soundly supply: an agent span can hold
+/// several requests, and several framed agents live under one orchestrator.
+const SYSTEM_FRAME_GAP: &[(&str, &str)] = &[(
+    "strands/swarm",
+    "the swarm's request arrives on its orchestrator span, the planner's prompt on the agent span",
+)];
 
 /// Every trace view whose system instruction sorts after the first user turn.
 fn system_frame_violations(built: &Built) -> Vec<String> {

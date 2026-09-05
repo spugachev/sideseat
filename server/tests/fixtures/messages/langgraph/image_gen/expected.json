@@ -646,8 +646,8 @@
     "trace-1": {
       "message_count": 9,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "assistant",
@@ -663,19 +663,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Generate 3 images of a dog",
-          "content_digest": "89aa55f374613789",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You will be instructed to generate a number of images of a given subject. Vary the prompt for each generated image to create a variety of options. Your final output must contain ONLY a comma-separated list of the filesystem paths of generat…[250 chars]",
           "content_digest": "5e5525d3b8659029",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Generate 3 images of a dog",
+          "content_digest": "89aa55f374613789",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -812,8 +812,8 @@
     "trace-7": {
       "message_count": 3,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant"
       ],
       "tool_names": [
@@ -823,19 +823,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "I apologize, but I'm unable to generate the images at this time. The image generation service is currently unavailable due to a model version that has reached the end of its life. This is a technical issue with the AWS Titan Image Generator…[375 chars]",
-          "content_digest": "d1b8f16978f232c0",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You will be provided with a list of filesystem paths, each containing an image. Describe each image, and then choose which one is best. Your final line of output must be as follows: FINAL DECISION: <path to final decision image>",
           "content_digest": "4000fcf8e134d2e3",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "I apologize, but I'm unable to generate the images at this time. The image generation service is currently unavailable due to a model version that has reached the end of its life. This is a technical issue with the AWS Titan Image Generator…[375 chars]",
+          "content_digest": "d1b8f16978f232c0",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -859,17 +859,17 @@
     "langgraph-image_gen-64f68058": {
       "message_count": 12,
       "role_sequence": [
-        "user",
         "system",
-        "assistant",
-        "assistant",
-        "assistant",
-        "tool",
-        "tool",
-        "tool",
-        "assistant",
         "user",
+        "assistant",
+        "assistant",
+        "assistant",
+        "tool",
+        "tool",
+        "tool",
+        "assistant",
         "system",
+        "user",
         "assistant"
       ],
       "tool_names": [
@@ -880,19 +880,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Generate 3 images of a dog",
-          "content_digest": "89aa55f374613789",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You will be instructed to generate a number of images of a given subject. Vary the prompt for each generated image to create a variety of options. Your final output must contain ONLY a comma-separated list of the filesystem paths of generat…[250 chars]",
           "content_digest": "5e5525d3b8659029",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Generate 3 images of a dog",
+          "content_digest": "89aa55f374613789",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -955,19 +955,19 @@
         },
         {
           "index": 9,
-          "role": "user",
-          "entry_type": "text",
-          "content": "I apologize, but I'm unable to generate the images at this time. The image generation service is currently unavailable due to a model version that has reached the end of its life. This is a technical issue with the AWS Titan Image Generator…[375 chars]",
-          "content_digest": "d1b8f16978f232c0",
-          "observation_type": "chain"
-        },
-        {
-          "index": 10,
           "role": "system",
           "entry_type": "text",
           "content": "You will be provided with a list of filesystem paths, each containing an image. Describe each image, and then choose which one is best. Your final line of output must be as follows: FINAL DECISION: <path to final decision image>",
           "content_digest": "4000fcf8e134d2e3",
           "observation_type": "generation"
+        },
+        {
+          "index": 10,
+          "role": "user",
+          "entry_type": "text",
+          "content": "I apologize, but I'm unable to generate the images at this time. The image generation service is currently unavailable due to a model version that has reached the end of its life. This is a technical issue with the AWS Titan Image Generator…[375 chars]",
+          "content_digest": "d1b8f16978f232c0",
+          "observation_type": "chain"
         },
         {
           "index": 11,

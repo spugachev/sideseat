@@ -1080,8 +1080,8 @@
     "trace-11": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant"
@@ -1093,19 +1093,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "How does RAG work and what are its key components?",
-          "content_digest": "d75bacebd91f3248",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a helpful AI assistant with access to a technical knowledge base about AI frameworks and observability. When answering questions: 1. ALWAYS use the search_knowledge tool first to find relevant information 2. Base your answers on the…[501 chars]",
           "content_digest": "90aba6b63e48a6ed",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "How does RAG work and what are its key components?",
+          "content_digest": "d75bacebd91f3248",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1158,8 +1158,8 @@
     "trace-15": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant"
@@ -1171,19 +1171,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "What embedding models are available for vector search?",
-          "content_digest": "fc08de1734188b8c",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a helpful AI assistant with access to a technical knowledge base about AI frameworks and observability. When answering questions: 1. ALWAYS use the search_knowledge tool first to find relevant information 2. Base your answers on the…[501 chars]",
           "content_digest": "90aba6b63e48a6ed",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "What embedding models are available for vector search?",
+          "content_digest": "fc08de1734188b8c",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1271,8 +1271,8 @@
     "trace-7": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant"
@@ -1284,19 +1284,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "What is SideSeat and how does it help with AI observability?",
-          "content_digest": "258073a7aafdb01d",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a helpful AI assistant with access to a technical knowledge base about AI frameworks and observability. When answering questions: 1. ALWAYS use the search_knowledge tool first to find relevant information 2. Base your answers on the…[501 chars]",
           "content_digest": "90aba6b63e48a6ed",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "What is SideSeat and how does it help with AI observability?",
+          "content_digest": "258073a7aafdb01d",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1344,18 +1344,18 @@
     "langgraph-rag_local-6c8e31fc": {
       "message_count": 15,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant",
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant",
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant"
@@ -1367,19 +1367,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "What is SideSeat and how does it help with AI observability?",
-          "content_digest": "258073a7aafdb01d",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a helpful AI assistant with access to a technical knowledge base about AI frameworks and observability. When answering questions: 1. ALWAYS use the search_knowledge tool first to find relevant information 2. Base your answers on the…[501 chars]",
           "content_digest": "90aba6b63e48a6ed",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "What is SideSeat and how does it help with AI observability?",
+          "content_digest": "258073a7aafdb01d",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1408,19 +1408,19 @@
         },
         {
           "index": 5,
-          "role": "user",
-          "entry_type": "text",
-          "content": "How does RAG work and what are its key components?",
-          "content_digest": "d75bacebd91f3248",
-          "observation_type": "chain"
-        },
-        {
-          "index": 6,
           "role": "system",
           "entry_type": "text",
           "content": "You are a helpful AI assistant with access to a technical knowledge base about AI frameworks and observability. When answering questions: 1. ALWAYS use the search_knowledge tool first to find relevant information 2. Base your answers on the…[501 chars]",
           "content_digest": "90aba6b63e48a6ed",
           "observation_type": "generation"
+        },
+        {
+          "index": 6,
+          "role": "user",
+          "entry_type": "text",
+          "content": "How does RAG work and what are its key components?",
+          "content_digest": "d75bacebd91f3248",
+          "observation_type": "chain"
         },
         {
           "index": 7,
@@ -1449,19 +1449,19 @@
         },
         {
           "index": 10,
-          "role": "user",
-          "entry_type": "text",
-          "content": "What embedding models are available for vector search?",
-          "content_digest": "fc08de1734188b8c",
-          "observation_type": "chain"
-        },
-        {
-          "index": 11,
           "role": "system",
           "entry_type": "text",
           "content": "You are a helpful AI assistant with access to a technical knowledge base about AI frameworks and observability. When answering questions: 1. ALWAYS use the search_knowledge tool first to find relevant information 2. Base your answers on the…[501 chars]",
           "content_digest": "90aba6b63e48a6ed",
           "observation_type": "generation"
+        },
+        {
+          "index": 11,
+          "role": "user",
+          "entry_type": "text",
+          "content": "What embedding models are available for vector search?",
+          "content_digest": "fc08de1734188b8c",
+          "observation_type": "chain"
         },
         {
           "index": 12,

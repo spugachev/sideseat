@@ -99,6 +99,14 @@ pub(super) struct OrderEvidence {
     /// generation was given, reported beside the conversation. A carrier fact, never a role fact:
     /// see `CarrierSemantics::carrier_is_detached_request_frame`.
     detached_frame: bool,
+    /// The ordered-input carrier *family* this observation belongs to, interned per span, when its
+    /// carrier is an ordered input array of a generation span. `llm.input_messages.0.message` and
+    /// `.1.message` are one array, and the family is what groups them - the exact key interns them
+    /// apart and a one-member sequence orders nothing. History is deliberately **not** folded in here
+    /// (unlike `carrier_ordered`): the framing block reads this and neutralises replays with its
+    /// first-seen rule instead, which is what lets the array order the request's own new turns even
+    /// when their surviving copies live on other spans.
+    input_family: Option<usize>,
 }
 
 /// Reduce the classified, pre-dedup blocks to what the resolver reads.
@@ -117,6 +125,7 @@ pub(super) fn collect_order_evidence(
     // two different emissions as though one payload had listed them. Contraction already keys on the
     // instance; this is the same key, which is what the TLA+ model assumes throughout.
     let mut carriers: HashMap<PayloadKey<'_>, usize> = HashMap::new();
+    let mut input_families: HashMap<(String, String), usize> = HashMap::new();
     blocks
         .iter()
         .map(|block| {
@@ -149,6 +158,32 @@ pub(super) fn collect_order_evidence(
                     .entry((block.span_id.clone(), emission_scope(block)))
                     .or_insert(next)
             });
+            // Only OpenInference's fragmented array for now, deliberately. The rule generalises in
+            // principle to every ordered input family, and broadening it to Vercel's `ai.prompt`
+            // regressed a sequential two-step trace, measured: request 2's array lists
+            // `call1, result1` and its first-seen sequencing pulled the second step's call ahead of
+            // the first step's result - `call1, result1, call2, result2` became
+            // `call1, call2, result1, result2`, which misrepresents the causality the old order
+            // showed. Each further family needs its own measured pass, exactly like every other
+            // promotion in this module.
+            let ordered_input = block.is_generation_span()
+                && semantics.position_provides_sequence_order
+                && !semantics.carrier_holds_span_output
+                && !semantics.carrier_is_detached_request_frame
+                && block
+                    .source_attribute
+                    .as_deref()
+                    .is_some_and(|k| k.starts_with("llm.input_messages"));
+            let input_family = ordered_input.then(|| {
+                let family = canonical_input_family(
+                    block.event_name.as_deref(),
+                    block.source_attribute.as_deref(),
+                );
+                let next = input_families.len();
+                *input_families
+                    .entry((block.span_id.clone(), family))
+                    .or_insert(next)
+            });
             OrderEvidence {
                 emission,
                 message_index: block.message_index,
@@ -161,9 +196,21 @@ pub(super) fn collect_order_evidence(
                 is_output: block.is_output_source(),
                 from_generation: block.is_generation_span(),
                 detached_frame: semantics.carrier_is_detached_request_frame,
+                input_family,
             }
         })
         .collect()
+}
+
+/// The family of an ordered-input carrier: the name with any trailing array index stripped, so the
+/// members of one array share it. `llm.input_messages.0.message` and `.1.message` are one array;
+/// `new_context` or `ai.prompt` are already whole.
+fn canonical_input_family(event: Option<&str>, attribute: Option<&str>) -> String {
+    let name = attribute.or(event).unwrap_or_default();
+    match name.find(|c: char| c.is_ascii_digit()) {
+        Some(i) if i > 0 && name.as_bytes().get(i - 1) == Some(&b'.') => name[..i - 1].to_string(),
+        _ => name.to_string(),
+    }
 }
 
 /// Which emission of its span an observation belongs to.
@@ -1047,6 +1094,9 @@ pub(super) fn resolve(
         let mut inputs_by_span: HashMap<usize, BTreeSet<usize>> = HashMap::new();
         let mut generation_outputs: BTreeSet<usize> = BTreeSet::new();
         let mut span_first_effective: HashMap<usize, DateTime<Utc>> = HashMap::new();
+        // The ordered members of each input array, per (span, family): `(message, entry, unit)`.
+        type ArrayMembers = HashMap<usize, Vec<EmissionMember>>;
+        let mut arrays_by_span: HashMap<usize, ArrayMembers> = HashMap::new();
         for (observation, seen) in evidence.iter().enumerate() {
             if !seen.from_generation {
                 continue;
@@ -1067,6 +1117,14 @@ pub(super) fn resolve(
                     }
                 })
                 .or_insert(seen.effective);
+            if let Some(family) = seen.input_family {
+                arrays_by_span
+                    .entry(seen.span)
+                    .or_default()
+                    .entry(family)
+                    .or_default()
+                    .push((seen.message_index, seen.entry_index, unit));
+            }
             let side = if seen.detached_frame {
                 &mut frames_by_span
             } else {
@@ -1086,8 +1144,53 @@ pub(super) fn resolve(
         requests.sort_by_key(|span| (span_first_effective.get(span).copied(), *span));
 
         let mut already_seen: BTreeSet<usize> = BTreeSet::new();
+        // Requests that only carry arrays still take part in first-seen accounting.
+        for span in arrays_by_span.keys() {
+            if !requests.contains(span) {
+                requests.push(*span);
+            }
+        }
+        requests.sort_by_key(|span| (span_first_effective.get(span).copied(), *span));
         for span in requests {
             let inputs = inputs_by_span.get(&span).cloned().unwrap_or_default();
+            // An ordered input array orders the request's **first-seen** members. The array's own
+            // positions are the evidence, history included - the framing block projects everything
+            // through lineage - and first-seen is what neutralises a replay: a member already listed by
+            // an earlier request belongs to that turn, and an earlier generation's output keeps its
+            // conversation position, so a changed instruction at position 0 of a replaying array
+            // (`adk/image_gen`'s critic) frames only its own request's new turns. This is what lets the
+            // array order a frame that lives *inside* it - langgraph's `llm.input_messages` carries
+            // `system@0, user@1`, and extraction fragments that array into per-index carriers, so the
+            // ordinary carrier-sequence class never sees it whole.
+            if let Some(families) = arrays_by_span.get(&span) {
+                let mut family_ids: Vec<&usize> = families.keys().collect();
+                family_ids.sort_unstable();
+                for family in family_ids {
+                    let mut members = families[family].clone();
+                    members.sort_unstable();
+                    let mut sequence: Vec<usize> = Vec::new();
+                    for (_, _, unit) in members {
+                        if already_seen.contains(&unit)
+                            || generation_outputs.contains(&unit)
+                            || sequence.contains(&unit)
+                        {
+                            continue;
+                        }
+                        sequence.push(unit);
+                    }
+                    for pair in sequence.windows(2) {
+                        add_edge(
+                            pair[0],
+                            pair[1],
+                            constraints,
+                            &unit_min_legacy,
+                            &mut successors,
+                            &mut indegree,
+                            &mut edges,
+                        );
+                    }
+                }
+            }
             if let Some(frames) = frames_by_span.get(&span) {
                 for &frame in frames {
                     for &input in &inputs {
@@ -1345,6 +1448,7 @@ mod cycle_tests {
             is_output: false,
             from_generation: false,
             detached_frame: false,
+            input_family: None,
         }
     }
 

@@ -3050,8 +3050,8 @@
     "trace-1": {
       "message_count": 3,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant"
       ],
       "tool_names": [
@@ -3064,19 +3064,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Create a simple plan to build a weather app that shows forecasts for multiple cities",
-          "content_digest": "f70ad56a39c626b9",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a project planner. Your role is to: 1. Break down complex tasks into steps 2. Identify which specialist should handle each step 3. Hand off to the appropriate agent (researcher, coder, reviewer) 4. Coordinate the overall workflow",
           "content_digest": "94f9aa950c09d1c4",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Create a simple plan to build a weather app that shows forecasts for multiple cities",
+          "content_digest": "f70ad56a39c626b9",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -3198,8 +3198,8 @@
     "langgraph-swarm-1a30e49f": {
       "message_count": 3,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant"
       ],
       "tool_names": [
@@ -3212,19 +3212,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Create a simple plan to build a weather app that shows forecasts for multiple cities",
-          "content_digest": "f70ad56a39c626b9",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You are a project planner. Your role is to: 1. Break down complex tasks into steps 2. Identify which specialist should handle each step 3. Hand off to the appropriate agent (researcher, coder, reviewer) 4. Coordinate the overall workflow",
           "content_digest": "94f9aa950c09d1c4",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Create a simple plan to build a weather app that shows forecasts for multiple cities",
+          "content_digest": "f70ad56a39c626b9",
+          "observation_type": "chain"
         },
         {
           "index": 2,

@@ -1532,8 +1532,8 @@
     "trace-1": {
       "message_count": 7,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "tool",
@@ -1548,19 +1548,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Provide a 3-day weather forecast for New York City.",
-          "content_digest": "75e9643b50cb90f4",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You're a helpful weather assistant. Use the weather_forecast tool to get weather data. Guidelines (Important!!!): 1. Always use the weather_forecast tool for weather information. 2. Keep responses concise and friendly. 3. Default to New Yor…[4330 chars]",
           "content_digest": "92df4fe0f3bd0103",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Provide a 3-day weather forecast for New York City.",
+          "content_digest": "75e9643b50cb90f4",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1609,8 +1609,8 @@
     "trace-10": {
       "message_count": 8,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "assistant",
@@ -1626,19 +1626,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Provide a 14-day weather forecast for London.",
-          "content_digest": "7426414dbeed41d0",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You're a helpful weather assistant. Use the weather_forecast tool to get weather data. Guidelines (Important!!!): 1. Always use the weather_forecast tool for weather information. 2. Keep responses concise and friendly. 3. Default to New Yor…[4330 chars]",
           "content_digest": "92df4fe0f3bd0103",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Provide a 14-day weather forecast for London.",
+          "content_digest": "7426414dbeed41d0",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1787,8 +1787,8 @@
     "trace-7": {
       "message_count": 7,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "assistant",
         "tool",
@@ -1803,19 +1803,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Provide a 7-day weather forecast for Los Angeles.",
-          "content_digest": "984bf68a8a35a65a",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You're a helpful weather assistant. Use the weather_forecast tool to get weather data. Guidelines (Important!!!): 1. Always use the weather_forecast tool for weather information. 2. Keep responses concise and friendly. 3. Default to New Yor…[4330 chars]",
           "content_digest": "92df4fe0f3bd0103",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Provide a 7-day weather forecast for Los Angeles.",
+          "content_digest": "984bf68a8a35a65a",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -1880,8 +1880,8 @@
     "langgraph-tool_use-9f224228": {
       "message_count": 26,
       "role_sequence": [
+        "system",
         "user",
-        "system",
         "assistant",
         "assistant",
         "tool",
@@ -1891,15 +1891,15 @@
         "assistant",
         "assistant",
         "assistant",
+        "system",
         "user",
+        "assistant",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
         "system",
-        "assistant",
-        "assistant",
-        "tool",
-        "tool",
-        "assistant",
         "user",
-        "system",
         "assistant",
         "assistant",
         "assistant",
@@ -1915,19 +1915,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Provide a 3-day weather forecast for New York City.",
-          "content_digest": "75e9643b50cb90f4",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You're a helpful weather assistant. Use the weather_forecast tool to get weather data. Guidelines (Important!!!): 1. Always use the weather_forecast tool for weather information. 2. Keep responses concise and friendly. 3. Default to New Yor…[4330 chars]",
           "content_digest": "92df4fe0f3bd0103",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Provide a 3-day weather forecast for New York City.",
+          "content_digest": "75e9643b50cb90f4",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -2007,19 +2007,19 @@
         },
         {
           "index": 11,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Provide a 7-day weather forecast for Los Angeles.",
-          "content_digest": "984bf68a8a35a65a",
-          "observation_type": "chain"
-        },
-        {
-          "index": 12,
           "role": "system",
           "entry_type": "text",
           "content": "You're a helpful weather assistant. Use the weather_forecast tool to get weather data. Guidelines (Important!!!): 1. Always use the weather_forecast tool for weather information. 2. Keep responses concise and friendly. 3. Default to New Yor…[4330 chars]",
           "content_digest": "92df4fe0f3bd0103",
           "observation_type": "generation"
+        },
+        {
+          "index": 12,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Provide a 7-day weather forecast for Los Angeles.",
+          "content_digest": "984bf68a8a35a65a",
+          "observation_type": "chain"
         },
         {
           "index": 13,
@@ -2065,19 +2065,19 @@
         },
         {
           "index": 18,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Provide a 14-day weather forecast for London.",
-          "content_digest": "7426414dbeed41d0",
-          "observation_type": "chain"
-        },
-        {
-          "index": 19,
           "role": "system",
           "entry_type": "text",
           "content": "You're a helpful weather assistant. Use the weather_forecast tool to get weather data. Guidelines (Important!!!): 1. Always use the weather_forecast tool for weather information. 2. Keep responses concise and friendly. 3. Default to New Yor…[4330 chars]",
           "content_digest": "92df4fe0f3bd0103",
           "observation_type": "generation"
+        },
+        {
+          "index": 19,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Provide a 14-day weather forecast for London.",
+          "content_digest": "7426414dbeed41d0",
+          "observation_type": "chain"
         },
         {
           "index": 20,

@@ -341,8 +341,8 @@
     "trace-1": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant"
@@ -354,19 +354,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Calculate an expression for me: What is 12345 plus 6789?",
-          "content_digest": "2f005e8714b6ca59",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You help users to calculate expressions.",
           "content_digest": "b7a2b52d27e0093a",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Calculate an expression for me: What is 12345 plus 6789?",
+          "content_digest": "2f005e8714b6ca59",
+          "observation_type": "chain"
         },
         {
           "index": 2,
@@ -414,8 +414,8 @@
     "langgraph-mcp_tools-afd57394": {
       "message_count": 5,
       "role_sequence": [
-        "user",
         "system",
+        "user",
         "assistant",
         "tool",
         "assistant"
@@ -427,19 +427,19 @@
       "messages": [
         {
           "index": 0,
-          "role": "user",
-          "entry_type": "text",
-          "content": "Calculate an expression for me: What is 12345 plus 6789?",
-          "content_digest": "2f005e8714b6ca59",
-          "observation_type": "chain"
-        },
-        {
-          "index": 1,
           "role": "system",
           "entry_type": "text",
           "content": "You help users to calculate expressions.",
           "content_digest": "b7a2b52d27e0093a",
           "observation_type": "generation"
+        },
+        {
+          "index": 1,
+          "role": "user",
+          "entry_type": "text",
+          "content": "Calculate an expression for me: What is 12345 plus 6789?",
+          "content_digest": "2f005e8714b6ca59",
+          "observation_type": "chain"
         },
         {
           "index": 2,
