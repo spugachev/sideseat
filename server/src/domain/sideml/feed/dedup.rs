@@ -415,15 +415,26 @@ fn rank_scope<'a>(
     id: Option<&'a str>,
     shape_count: &HashMap<ResponseKey<'a>, usize>,
 ) -> ResponseKey<'a> {
-    // Only a **non-history** call ranks trace-wide. A history re-send regenerates the id, so trusting
-    // it there would turn one execution's echo into a second execution - which
-    // `a_resent_pair_of_identical_calls_is_still_one_pair` and
-    // `test_same_tool_call_different_ids_deduped` pin, and which the captured corpus does not contain.
-    // The distinction is the one this whole document rests on: a re-send is not evidence of an
-    // occurrence, so its id is not evidence of a distinct one either.
+    // Only an id from a carrier that **cannot be a re-send** ranks trace-wide. A history re-send
+    // regenerates the id, so trusting a snapshot's id turns one execution's echo into a second
+    // execution. The shape-multiplicity test below covers the *pair* form (a re-sent pair lists its
+    // shape twice in one response); it cannot cover a **single** call re-sent once, which lists its
+    // shape once in each response and so looks exactly like two executions -
+    // `a_resent_single_call_with_a_regenerated_id_is_still_one_call` reproduced the duplicate.
+    //
+    // The fact is the carrier's, deliberately, not the block's `is_history` flag: phase 7's duplicate
+    // detection groups by these very ordinals, so a flag it sets cannot gate the rank that decides
+    // whether it fires - the two executions this rank exists to keep (`agent-framework/tool_use` and
+    // the five suites beside it) all report their calls through *emission* carriers, and a re-send by
+    // definition arrives through one that `carrier_may_contain_history_or_state`.
+    let id_is_execution_evidence = !crate::domain::sideml::carrier::semantics_for(
+        block.event_name.as_deref(),
+        block.source_attribute.as_deref(),
+    )
+    .carrier_may_contain_history_or_state;
     let response = response_scope(block, shape);
     let lists_shape_once = shape_count.get(&response).copied().unwrap_or(1) <= 1;
-    if id.is_some_and(|s| !s.is_empty()) && lists_shape_once {
+    if id_is_execution_evidence && id.is_some_and(|s| !s.is_empty()) && lists_shape_once {
         (block.trace_id.as_str(), "", "", None, None, shape)
     } else {
         response
@@ -2354,8 +2365,14 @@ mod tests {
         // `a_resent_pair_of_identical_calls_is_still_one_pair` holds that other side.
         let t0 = utc(0);
 
-        let tool1 = make_tool_use_block("trace1", "span1", "call_111", "search", t0);
-        let tool2 = make_tool_use_block("trace1", "span2", "call_222", "search", t0);
+        // An execution's own report, not a re-send: the trace-wide id rank only trusts an id from an
+        // emission carrier, which is how a genuine second execution and a snapshot's regenerated echo
+        // are told apart (`a_resent_single_call_with_a_regenerated_id_is_still_one_call` holds the
+        // other side).
+        let mut tool1 = make_tool_use_block("trace1", "span1", "call_111", "search", t0);
+        tool1.event_name = Some("gen_ai.choice".to_string());
+        let mut tool2 = make_tool_use_block("trace1", "span2", "call_222", "search", t0);
+        tool2.event_name = Some("gen_ai.choice".to_string());
 
         // The *identity* is still content-based: the id decides the repeat rank, never the identity,
         // because a re-send may regenerate it.

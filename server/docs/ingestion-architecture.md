@@ -1,6 +1,6 @@
 # Ingestion architecture
 
-**Status**: revision 17, after seventeen consecutive architecture reviews. **The deferred track is closed** — see "The gate, answered". Revision log at the end.
+**Status**: revision 25 — **the series is closed**. Twenty-five consecutive architecture reviews; the closing statement is directly below, the mechanism table after it, the full history in the revision log. **The deferred track is closed** — see "The gate, answered". Revision log at the end.
 
 What this describes: how OTLP spans from any GenAI framework become the message list the span, trace,
 session and feed views return — **and**, because thirteen reviews established that the semantics cannot
@@ -8,6 +8,49 @@ be specified without them, what is persisted at ingest, what is hydrated per rea
 see. Revisions 1-12 opened with "not how they are stored, queued or served" and then specified
 persistence, cache keys, API versions, retention and data handling. That sentence was false, so it is
 gone rather than the content.
+
+## Closing statement — review 25 of 25
+
+The series established that the observed ingestion defects did not require a global occurrence model.
+**Nine committed defects** were repaired through local carrier-instance semantics, conservation rules
+and explicit ordering relations. The resolver is now the **single ordering authority** for trace,
+session, span and feed projections; request framing and fragmented ordered-input sequencing are landed
+(21 of 22 frame-displacement fixtures fixed); two genuinely contradictory fixtures are pinned
+bidirectionally; and the remaining Strands displacement is recorded as a measured information limit
+rather than hidden behind a heuristic.
+
+The occurrence-model redesign was **rejected against a falsifiable gate**: the corpus had to contain a
+defect that could not be repaired through a local carrier-instance rule, and it did not. The attempted
+redesign nevertheless exposed real false-equivalence, history, framing and ordering defects, all of
+which admitted narrower repairs — which is what makes the rejection trustworthy: it followed an
+unsuccessful search for its required evidence, not a preference for the existing implementation.
+
+**Against the original charge**, ruled separately:
+
+- *Reliable* — **qualified yes.** The pipeline is materially harder to break unnoticed: permutation
+  checks, neutral-resolver equivalence, survivor-independence perturbation, bidirectional exemption
+  and contradiction lists, conservation checks, and a property binding the feed to the resolver. Not
+  reliable-by-construction: the truth generator is unbuilt and a cycle is still a deterministic guess.
+- *Scalable* — **incomplete.** Stateless ✓; deterministic within one build ✓ (rolling deploys stated,
+  not solved); bounded search ✓ (the 20 000-attempt budget); input-linear and memory-bounded on the
+  normal path only (the overlapping-dataflow pairwise case remains quadratic in the adversarial
+  shape); degradation partially visible (replay exhaustion reaches the caller, an ordering
+  contradiction only warns).
+- *Framework-independent* — **at the supported-semconv boundary.** Normalisation reads no framework
+  identity, measured; producer scope remains a correctness input for private dialects and is still
+  not persisted, so the boundary is exactly where review 6 drew it.
+
+**Open, with mechanisms named**: the `SourceProgram` truth generator and mutation suite; persistence
+of instrumentation scope and carrier provenance (approved, unstarted); the versioned read envelope and
+generated client contract; caller-visible ordering-degradation reporting; the quadratic
+overlapping-dataflow case; and the TLA+ model, which covers three of six constraint classes and must
+say so in its header rather than be extended piecemeal.
+
+**For the next engineer**: the highest-value first moves are the scope/provenance persistence (step 4
+of the plan — everything scope-aware waits on it) and the compact read envelope (step 5 — three facts
+are loaded and unreachable today). The verification style that found every defect in this series is
+worth keeping: measure before changing, require the delta to match the prediction, and make every
+list bidirectional.
 
 ## Status of every mechanism in this document
 
@@ -20,7 +63,7 @@ different levels of authorisation and nothing else says which is which.
 | **Five false-equivalence repairs** — exceptions per span, executions per span, a reportable-leaf error rule, a rescued user turn | **landed** (`416e7599`, `349e4c5f`, `2ea7eaf8`, `b9ede710`) | maintain | — | the conservation checks below |
 | **Conservation checks** — a reported exception reaches the trace; a single-trace fixture keeps its user turn | **landed** (`ff30d64c`) | maintain | — | three mutations, each naming its fixture |
 | **Plain-text generic I/O** | **landed** | maintain | — | `_synthetic/plain_text_generic_io` |
-| **Resolver authority** — one order, `legacy_rank` opaque, feed consumes it | **approved** | build | — | byte-identical corpus output |
+| **Resolver authority** — one order, the feed projects it | **landed** (`ce864be6`) | maintain | — | `the_feed_projects_the_resolved_order_without_resorting_it` |
 | **SCC condensation and a degradation signal** | warn landed; **and the corpus measured**: the claim "no fixture cycles" was false — `adk/tool_use` and `_synthetic/repeated_tool_result_parts` have always contradicted themselves, invisibly, because the golden tests install no tracing subscriber. Both produce byte-correct output (the deterministic release lands on the legacy order). `ordering_contradictions_are_pinned` now holds the set bidirectionally | maintain | — | a new cycling fixture fails the ratchet |
 | **The request-scoped framing edge** | **landed** for the mechanism it covers: 16 of 22 fixtures (both Claude SDK suites), whose frame and turn meet on one generation span. LangGraph (fragmented array carriers) and `strands/swarm` (frame and turn on different spans, no request link) are different mechanisms and stay in the ratchet | maintain | — | the gap list holds the two open mechanisms bidirectionally |
 | **Instrumentation scope + carrier provenance persistence** | **approved** | build | — | a scope-keyed rule becomes expressible |
@@ -1843,3 +1886,4 @@ nothing here is a specification, and a row may describe a mechanism a later revi
 | 15 | hunting the same defect class | The span-versus-trace comparison found **two more** real defects and one false alarm. 787 groups appear on N spans and fewer than N times in their trace, almost all of them the product working (one langgraph question reaches 135 spans), so the yield is in the exceptions: two executions of a same-shaped tool call collapsing across **six** fixtures, and `strands/error` losing its error entirely. The tool-call repair needed a discriminator to stay safe — how many calls of one shape a *single response* lists — because trace-wide ranking alone turned a re-sent pair with regenerated ids into four calls, which a unit test pinned. `langgraph/tool_use` trace-4 losing its question is the documented cross-trace limit, not a defect: its question is byte-identical to trace-1's | `349e4c5f`; six fixtures gained their missing executions |
 | 16 | finishing the found defects | Verified and fixed the two outstanding ones, and **corrected a mechanism I had documented wrongly**. `strands/error` showed *no error at all* because a parent deferred to an ERROR-status child with nothing renderable; "leaf" now means deepest *reportable* error, and `NO_ANSWER_EXPECTED` is **empty** — its one entry claimed the run produced no answer when it had produced a `ValidationException`, so the exemption was documenting this defect rather than a property of the source, which is precisely what an exemption must never do. And `strands-js/swarm` is **not** the timestamp phase: the user event sits 46,416 ns *after* its span's start. Two other rules mark the two copies, and the fix keeps one witness under conditions that make it scope-safe — restricted to the child-generation phase, because rescuing accumulator-marked blocks gave langgraph's `tools` span views a message they had never shown | `2ea7eaf8`, `b9ede710`; delta exactly the two fixtures |
 | 17 | the invariant that would have caught them | **General local-witness conservation is not constructible from the goldens**, and saying so is the finding: establishing the legitimate aliases (history re-send, parent suppression, cross-trace stripping) needs `parent_span_id`, `status_code`, timestamps and session identity that `InvariantRow` does not carry — and using the pipeline's own dedup lineage as proof would let faulty dedup certify its own false equivalence. Two narrow checks were built instead and cover three of the five defects, flagging nothing today and each mutation-verified: **at least one reported exception reaches the trace** (source-backed antecedent, so an ERROR status with no detail is not accused) and **an exception reported by several distinct spans keeps its multiplicity**, plus **a single-trace fixture whose spans carried a user turn shows one**. Rejected as unsound: "every span exception has a trace representative" flags the 18 legitimately suppressed parent copies across ten fixtures, and the tool-call-id form flags 13 trace views because a regenerated id legitimately disappears. Also corrected a claim of mine: `openai-agents/tool_use` looked like a sixth defect and is not — its second NYC id is a *regenerated* one, and the two similar answers have different digests, so the trace is right | `ff30d64c`, with the three mutation messages recorded in its commit |
+| 18-25 | landing the plan, and the closing hunt | The reviews stopped critiquing and started landing, each change measured before it moved. **18-20**: the feed's second scalar sort measured against the resolver's own order — first measurement wrong (first-difference only), the complete inventory found 17 positions across six feed views, and the feed now *projects* the resolved order (`ce864be6`), making the resolver the single ordering authority. **21**: the request-framing edge (`bb943853`) — the fact is the carrier's, never the role's; the first implementation regressed `agent-framework/swarm`'s four handoff instructions to the front, and the regression became the specification: a frame precedes only what its request saw **first**. 16 of 22 fixtures fixed. **22**: the langgraph mechanism is two changes, and canonicalisation alone fixes zero — the ordered-input array rule (`b8af1a62`) re-groups the fragmented family and orders first-seen members through lineage, history included; broadening it to Vercel's `ai.prompt` regressed a sequential trace and was scoped back. Five more fixtures fixed. **23**: interaction hunt — the "no corpus fixture cycles" claim was **false** (two fixtures always contradicted themselves, invisibly, since the warn reached no subscriber; now pinned bidirectionally by `ordering_contradictions_are_pinned`), and `strands/swarm` closed as a measured information limit: the question is rewritten (`Context: User Request: …`) before the model sees it, so no identity links it to any request. **24**: the last survivor dependence (the no-emission priority fallback read the chosen survivor's time; now the minimum over every projected observation), `KNOWN_DEFAULTED` made bidirectional — finding `system_prompt` declared-yet-listed and four dead exemptions the same day — and every stale claim removed. **25**: the closing verification found one more latent defect — a *single* call re-sent with a regenerated id ranked as a second execution, because the pair discriminator cannot see it and phase 7 groups by the very ordinals in question; fixed on the **carrier's** fact (only an emission carrier's id is execution evidence), with both sides pinned by unit tests | nine defects fixed across the series; 2 347 tests; every list bidirectional |

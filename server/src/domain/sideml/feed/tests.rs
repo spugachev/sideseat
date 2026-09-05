@@ -10617,3 +10617,48 @@ fn the_feed_projects_the_resolved_order_without_resorting_it() {
     sorted.reverse();
     assert_eq!(anchors, sorted, "responses are not newest-first");
 }
+
+/// A *single* call re-sent once with a regenerated id is still one call.
+///
+/// The pair form of this is pinned above; the single form is the case review 25 found unguarded, and
+/// it slips past the pair's own defence. Two executions are told apart from a re-sent pair by how many
+/// calls of one shape a single response lists - but a lone call re-sent once lists its shape once in
+/// *each* response, so that discriminator sees two "executions", and with the provider's regenerated id
+/// trusted trace-wide the echo ranked as a second call. The guard the rank scope's comment always
+/// claimed - only a **non-history** call ranks trace-wide - is what this test holds in place.
+#[test]
+fn a_resent_single_call_with_a_regenerated_id_is_still_one_call() {
+    let t = fixed_time();
+    let call = |id: &str| json!({"type": "tool_use", "id": id, "name": "generate_image", "input": {"prompt": "a cat"}});
+    let produced = json!([{
+        "source": {"event": {"name": "gen_ai.choice", "time": t.to_rfc3339()}},
+        "content": {"role": "assistant", "content": [call("call_1")]}
+    }]);
+    // A later span re-sends the conversation; the framework regenerated the call id.
+    let resent = json!([{
+        "source": {"event": {"name": "gen_ai.assistant.message", "time": (t + chrono::Duration::seconds(5)).to_rfc3339()}},
+        "content": {"role": "assistant", "content": [call("regenerated_9")]}
+    }]);
+
+    let first = make_span_row("trace1", "span1", None, &produced.to_string(), "[]", "[]");
+    let mut second = make_span_row("trace1", "span2", None, &resent.to_string(), "[]", "[]");
+    second.span_timestamp = first.span_timestamp + chrono::Duration::seconds(5);
+
+    let result = process_spans(vec![first, second], &FeedOptions::new());
+    let calls = result
+        .messages
+        .iter()
+        .filter(|b| b.entry_type == "tool_use")
+        .count();
+    assert_eq!(
+        calls,
+        1,
+        "the re-sent call must collapse onto the original, not rank as a second execution: {:?}",
+        result
+            .messages
+            .iter()
+            .filter(|b| b.entry_type == "tool_use")
+            .map(|b| b.tool_use_id.as_deref())
+            .collect::<Vec<_>>()
+    );
+}
