@@ -83,26 +83,17 @@ fn apply_initial_schema(conn: &Connection) -> Result<(), DuckdbError> {
     })
 }
 
-/// A datapoint's identity, so a re-delivered metrics payload stops accumulating duplicate rows.
+/// The one migration: v1 to current, directly.
 ///
-/// Existing rows get `''`, which is honest rather than convenient: nothing recorded before this
-/// version carries the fields' hash, and a value invented in SQL would not match the one Rust
-/// computes. Legacy rows therefore keep the old behaviour among themselves, and every row written
-/// from here on has an identity. The 90-day retention window ages the untagged ones out.
+/// Nothing above v1 was ever deployed, so the intermediate steps this file briefly carried (metric
+/// datapoint identity as v2, exemplars as v3, span scope as v4) described upgrades no real database
+/// could need - and each step replayed its own index dance. Consolidated on the project's standing
+/// rule: the schema is at version 2, and there is one migration.
 ///
-/// The `NOT NULL` matters: a fresh schema declares it, so without it an upgraded database carried a
-/// nullable column and the two schemas differed for one version. Backfilling and stopping is the same
-/// half-kept invariant the upgrade tests exist to catch.
-///
-/// Backfilled by a column `DEFAULT` rather than an `UPDATE`, then the default dropped so the shape matches
-/// the fresh schema exactly. An `UPDATE` followed by `SET NOT NULL` in one transaction is refused by
-/// DuckDB ("Cannot create index with outstanding updates"), so on a *populated* table the migration failed
-/// outright. Only a test that populates the table before migrating finds that.
-///
-/// The indexes are dropped and recreated around the `ALTER`, because DuckDB refuses to alter a table that
-/// has dependents at all: "Cannot alter entry because there are entries that depend on it". Every real v1
-/// database has these five indexes, so without this the migration failed on *every* database it exists to
-/// serve - and a test against a bare table would never have noticed.
+/// The index drop/recreate around each table's `ALTER`s is load-bearing: DuckDB refuses to alter a
+/// table with dependents at all, and every real v1 database has these indexes - a test against a bare
+/// table would never notice. `datapoint_id` gets the DEFAULT/`SET NOT NULL`/`DROP DEFAULT` dance
+/// because DuckDB refuses `UPDATE` + `SET NOT NULL` in one transaction.
 const MIGRATION_V2: &str = r#"DROP INDEX IF EXISTS idx_metrics_project_ts;
 DROP INDEX IF EXISTS idx_metrics_project_name;
 DROP INDEX IF EXISTS idx_metrics_project_name_ts;
@@ -114,37 +105,32 @@ ALTER TABLE otel_metrics ALTER COLUMN datapoint_id DROP DEFAULT;
 ALTER TABLE otel_metrics ADD COLUMN scope_attributes JSON;
 ALTER TABLE otel_metrics ADD COLUMN scope_schema_url VARCHAR;
 ALTER TABLE otel_metrics ADD COLUMN resource_schema_url VARCHAR;
-CREATE INDEX IF NOT EXISTS idx_metrics_project_ts ON otel_metrics(project_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_metrics_project_name ON otel_metrics(project_id, metric_name);
-CREATE INDEX IF NOT EXISTS idx_metrics_project_name_ts ON otel_metrics(project_id, metric_name, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_metrics_exemplar_trace ON otel_metrics(project_id, exemplar_trace_id);
-CREATE INDEX IF NOT EXISTS idx_metrics_session ON otel_metrics(project_id, session_id);
-"#;
-
-/// Every exemplar of a data point, not only the first.
-///
-/// Same index dance as `MIGRATION_V2`, and for the same reason: DuckDB refuses to `ALTER` a table that has
-/// dependents at all, and every real database has these five indexes. Nullable with no backfill - rows
-/// written before this version genuinely do not have the other exemplars, and inventing an array holding
-/// only the one that was kept would claim the exporter sent one.
-const MIGRATION_V3: &str = r#"DROP INDEX IF EXISTS idx_metrics_project_ts;
-DROP INDEX IF EXISTS idx_metrics_project_name;
-DROP INDEX IF EXISTS idx_metrics_project_name_ts;
-DROP INDEX IF EXISTS idx_metrics_exemplar_trace;
-DROP INDEX IF EXISTS idx_metrics_session;
 ALTER TABLE otel_metrics ADD COLUMN exemplars JSON;
 CREATE INDEX IF NOT EXISTS idx_metrics_project_ts ON otel_metrics(project_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_metrics_project_name ON otel_metrics(project_id, metric_name);
 CREATE INDEX IF NOT EXISTS idx_metrics_project_name_ts ON otel_metrics(project_id, metric_name, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_metrics_exemplar_trace ON otel_metrics(project_id, exemplar_trace_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_session ON otel_metrics(project_id, session_id);
+DROP INDEX IF EXISTS idx_spans_project_trace;
+DROP INDEX IF EXISTS idx_spans_project_ts;
+DROP INDEX IF EXISTS idx_spans_project_ingest;
+DROP INDEX IF EXISTS idx_spans_detail;
+DROP INDEX IF EXISTS idx_spans_project_session;
+DROP INDEX IF EXISTS idx_spans_project_span;
+ALTER TABLE otel_spans ADD COLUMN scope_name VARCHAR;
+ALTER TABLE otel_spans ADD COLUMN scope_version VARCHAR;
+CREATE INDEX IF NOT EXISTS idx_spans_project_trace ON otel_spans(project_id, trace_id);
+CREATE INDEX IF NOT EXISTS idx_spans_project_ts ON otel_spans(project_id, timestamp_start DESC);
+CREATE INDEX IF NOT EXISTS idx_spans_project_ingest ON otel_spans(project_id, ingested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_spans_detail ON otel_spans(project_id, trace_id, span_id);
+CREATE INDEX IF NOT EXISTS idx_spans_project_session ON otel_spans(project_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_spans_project_span ON otel_spans(project_id, span_id);
 "#;
 
 fn apply_migration(conn: &Connection, version: i32) -> Result<(), DuckdbError> {
     match version {
         1 => Ok(()), // Handled by apply_initial_schema
-        2 => apply_versioned_migration(conn, 2, "metric_datapoint_identity", MIGRATION_V2),
-        3 => apply_versioned_migration(conn, 3, "all_metric_exemplars", MIGRATION_V3),
+        2 => apply_versioned_migration(conn, 2, "v1_to_current", MIGRATION_V2),
         _ => Err(DuckdbError::MigrationFailed {
             version,
             name: "unknown".to_string(),
@@ -316,7 +302,22 @@ mod tests {
                  CREATE INDEX idx_metrics_project_name ON otel_metrics(project_id, metric_name);
                  CREATE INDEX idx_metrics_project_name_ts ON otel_metrics(project_id, metric_name, timestamp DESC);
                  CREATE INDEX idx_metrics_exemplar_trace ON otel_metrics(project_id, exemplar_trace_id);
-                 CREATE INDEX idx_metrics_session ON otel_metrics(project_id, session_id);",
+                 CREATE INDEX idx_metrics_session ON otel_metrics(project_id, session_id);
+                 -- The span side of the same reduction: v4 added the instrumentation scope.
+                 DROP INDEX idx_spans_project_trace;
+                 DROP INDEX idx_spans_project_ts;
+                 DROP INDEX idx_spans_project_ingest;
+                 DROP INDEX idx_spans_detail;
+                 DROP INDEX idx_spans_project_session;
+                 DROP INDEX idx_spans_project_span;
+                 ALTER TABLE otel_spans DROP COLUMN scope_name;
+                 ALTER TABLE otel_spans DROP COLUMN scope_version;
+                 CREATE INDEX idx_spans_project_trace ON otel_spans(project_id, trace_id);
+                 CREATE INDEX idx_spans_project_ts ON otel_spans(project_id, timestamp_start DESC);
+                 CREATE INDEX idx_spans_project_ingest ON otel_spans(project_id, ingested_at DESC);
+                 CREATE INDEX idx_spans_detail ON otel_spans(project_id, trace_id, span_id);
+                 CREATE INDEX idx_spans_project_session ON otel_spans(project_id, session_id);
+                 CREATE INDEX idx_spans_project_span ON otel_spans(project_id, span_id);",
             )
             .expect("reduce to the v1 shape");
         // A pre-existing row, to prove the backfill reaches it rather than leaving a null the NOT NULL
@@ -335,6 +336,13 @@ mod tests {
                 .unwrap_or_else(|e| panic!("migration {version}: {e}"));
         }
 
+        assert_eq!(
+            columns(&upgraded, "otel_spans"),
+            columns(&fresh, "otel_spans"),
+            "an upgraded database's otel_spans columns differ in name, type or *position* from a fresh \
+             one's - and the span writer is a positional Appender, so a position difference silently \
+             writes every value into the wrong column"
+        );
         assert_eq!(
             columns(&upgraded, "otel_metrics"),
             columns(&fresh, "otel_metrics"),

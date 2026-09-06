@@ -996,7 +996,7 @@ pub fn list_spans(
                 gen_ai_cost_input::DOUBLE, gen_ai_cost_output::DOUBLE, gen_ai_cost_cache_read::DOUBLE, gen_ai_cost_cache_write::DOUBLE,
                 gen_ai_cost_reasoning::DOUBLE, gen_ai_cost_total::DOUBLE,
                 gen_ai_usage_details::VARCHAR, metadata::VARCHAR, (raw_span->'attributes')::VARCHAR,
-                input_preview, output_preview, raw_span::VARCHAR, ingested_at
+                input_preview, output_preview, raw_span::VARCHAR, ingested_at, scope_name, scope_version
          FROM {DEDUP_SPANS} WHERE {} ORDER BY {} LIMIT {} OFFSET {}",
         where_clause, order, params.limit, offset,
         DEDUP_SPANS = DEDUP_SPANS
@@ -1086,7 +1086,7 @@ pub fn get_feed_spans(
                 gen_ai_cost_input::DOUBLE, gen_ai_cost_output::DOUBLE, gen_ai_cost_cache_read::DOUBLE, gen_ai_cost_cache_write::DOUBLE,
                 gen_ai_cost_reasoning::DOUBLE, gen_ai_cost_total::DOUBLE,
                 gen_ai_usage_details::VARCHAR, metadata::VARCHAR, (raw_span->'attributes')::VARCHAR,
-                input_preview, output_preview, raw_span::VARCHAR, ingested_at
+                input_preview, output_preview, raw_span::VARCHAR, ingested_at, scope_name, scope_version
          FROM {dedup} WHERE {} ORDER BY ingested_at DESC, span_id DESC, trace_id DESC LIMIT {}",
         where_clause, params.limit,
     );
@@ -1111,7 +1111,7 @@ pub fn get_spans_for_trace(
                gen_ai_cost_input::DOUBLE, gen_ai_cost_output::DOUBLE, gen_ai_cost_cache_read::DOUBLE, gen_ai_cost_cache_write::DOUBLE,
                gen_ai_cost_reasoning::DOUBLE, gen_ai_cost_total::DOUBLE,
                gen_ai_usage_details::VARCHAR, metadata::VARCHAR, (raw_span->'attributes')::VARCHAR,
-               input_preview, output_preview, raw_span::VARCHAR, ingested_at
+               input_preview, output_preview, raw_span::VARCHAR, ingested_at, scope_name, scope_version
                FROM otel_spans WHERE project_id = ? AND trace_id = ? ORDER BY timestamp_start LIMIT {}",
         QUERY_MAX_SPANS_PER_TRACE
     );
@@ -1136,7 +1136,7 @@ pub fn get_span(
                gen_ai_cost_input::DOUBLE, gen_ai_cost_output::DOUBLE, gen_ai_cost_cache_read::DOUBLE, gen_ai_cost_cache_write::DOUBLE,
                gen_ai_cost_reasoning::DOUBLE, gen_ai_cost_total::DOUBLE,
                gen_ai_usage_details::VARCHAR, metadata::VARCHAR, (raw_span->'attributes')::VARCHAR,
-               input_preview, output_preview, raw_span::VARCHAR, ingested_at
+               input_preview, output_preview, raw_span::VARCHAR, ingested_at, scope_name, scope_version
                FROM otel_spans WHERE project_id = ? AND trace_id = ? AND span_id = ?";
 
     let mut stmt = conn.prepare(sql)?;
@@ -2001,6 +2001,8 @@ fn row_to_span(row: &Row<'_>) -> Result<SpanRow, DuckdbError> {
         output_preview: row.get(36)?,
         raw_span: row.get(37)?,
         ingested_at: micros_to_datetime(ingested_at_micros),
+        scope_name: row.get(39)?,
+        scope_version: row.get(40)?,
     })
 }
 

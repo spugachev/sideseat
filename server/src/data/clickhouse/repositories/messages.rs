@@ -34,7 +34,22 @@ const CH_MESSAGE_SELECT_COLUMNS: &str = r#"
     tool_names,
     observation_type,
     session_id,
-    toInt64(toUnixTimestamp64Micro(ingested_at)) AS ingested_at_us"#;
+    toInt64(toUnixTimestamp64Micro(ingested_at)) AS ingested_at_us,
+    scope_name,
+    scope_version,
+    span_name,
+    framework,
+    gen_ai_response_model AS response_model,
+    gen_ai_response_id AS response_id,
+    gen_ai_temperature AS temperature,
+    gen_ai_top_p AS top_p,
+    gen_ai_max_tokens AS max_tokens,
+    gen_ai_finish_reasons AS finish_reasons,
+    gen_ai_usage_cache_read_tokens AS cache_read_tokens,
+    gen_ai_usage_cache_write_tokens AS cache_write_tokens,
+    gen_ai_usage_reasoning_tokens AS reasoning_tokens,
+    toFloat64(gen_ai_cost_input) AS cost_input,
+    toFloat64(gen_ai_cost_output) AS cost_output"#;
 
 /// ClickHouse row for message span queries
 #[derive(Row, Deserialize)]
@@ -60,6 +75,21 @@ struct ChMessageSpanRow {
     observation_type: Option<String>,
     session_id: Option<String>,
     ingested_at_us: i64,
+    scope_name: Option<String>,
+    scope_version: Option<String>,
+    span_name: Option<String>,
+    framework: Option<String>,
+    response_model: Option<String>,
+    response_id: Option<String>,
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    max_tokens: Option<i64>,
+    finish_reasons: Option<String>,
+    cache_read_tokens: i64,
+    cache_write_tokens: i64,
+    reasoning_tokens: i64,
+    cost_input: f64,
+    cost_output: f64,
 }
 
 impl From<ChMessageSpanRow> for MessageSpanRow {
@@ -90,6 +120,21 @@ impl From<ChMessageSpanRow> for MessageSpanRow {
             session_id: row.session_id,
             ingested_at: DateTime::from_timestamp_micros(row.ingested_at_us)
                 .unwrap_or(DateTime::UNIX_EPOCH),
+            scope_name: row.scope_name,
+            scope_version: row.scope_version,
+            span_name: row.span_name,
+            framework: row.framework,
+            response_model: row.response_model,
+            response_id: row.response_id,
+            temperature: row.temperature,
+            top_p: row.top_p,
+            max_tokens: row.max_tokens,
+            finish_reasons: row.finish_reasons,
+            cache_read_tokens: row.cache_read_tokens,
+            cache_write_tokens: row.cache_write_tokens,
+            reasoning_tokens: row.reasoning_tokens,
+            cost_input: row.cost_input,
+            cost_output: row.cost_output,
         }
     }
 }

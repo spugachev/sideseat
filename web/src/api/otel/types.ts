@@ -399,11 +399,49 @@ export interface MessagesMetadata {
   replay_matching_complete?: boolean;
 }
 
+// One envelope per span in scope: the request's parameters, models, ids, usage and cost breakdown,
+// timing and exact error fields. Sent once per span, never repeated per block - block-level `tokens`
+// and `cost` are the containing span's totals and must not be summed; these are the real splits.
+export interface SpanEnvelope {
+  trace_id: string;
+  span_id: string;
+  span_name?: string;
+  start_time: string;
+  end_time?: string;
+  model?: string;
+  response_model?: string;
+  response_id?: string;
+  provider?: string;
+  framework?: string;
+  // The instrumentation scope: the library that produced the span, versioned. Absent on rows
+  // written before the scope was captured.
+  scope_name?: string;
+  scope_version?: string;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  finish_reasons?: string[];
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  cost_input: number;
+  cost_output: number;
+  cost_total: number;
+  status_code?: string;
+  exception_type?: string;
+  exception_message?: string;
+  exception_stacktrace?: string;
+}
+
 export interface MessagesResponse {
   messages: Block[];
   metadata: MessagesMetadata;
   tool_definitions: Record<string, unknown>[];
   tool_names: string[];
+  envelopes: SpanEnvelope[];
 }
 
 export interface MessagesParams {
@@ -507,6 +545,8 @@ export interface FeedMessagesResponse {
   metadata: FeedMessagesMetadata;
   tool_definitions: Record<string, unknown>[];
   tool_names: string[];
+  // The page's own spans, the same scope the totals use.
+  envelopes: SpanEnvelope[];
 }
 
 export interface FeedSpansResponse {

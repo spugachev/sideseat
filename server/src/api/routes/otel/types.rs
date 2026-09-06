@@ -362,6 +362,128 @@ pub struct MessagesResponseDto {
     pub tool_definitions: Vec<serde_json::Value>,
     /// Deduplicated tool names sorted alphabetically
     pub tool_names: Vec<String>,
+    /// One envelope per span in scope: the request's parameters, models, ids, usage and cost
+    /// breakdown, timing and exact error fields - the facts a debugging caller needs beside the
+    /// messages. Loaded in the same query as the messages, because a second span-sized request
+    /// doubles the measured p50 and introduces a snapshot-consistency problem between two reads;
+    /// sent once per span, never repeated per block. A span billed with nothing to show still has an
+    /// envelope, which is how "this cost something and said nothing" stops being invisible.
+    pub envelopes: Vec<SpanEnvelopeDto>,
+}
+
+/// The compact per-span envelope. Every field was already extracted and persisted; before this DTO,
+/// three of them (the token split, both span timestamps, the exact exception fields) were **loaded on
+/// every message read and unreachable by any caller**, and the rest needed a second request joined by
+/// hand.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct SpanEnvelopeDto {
+    pub trace_id: String,
+    pub span_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub span_name: Option<String>,
+    pub start_time: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_time: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub framework: Option<String>,
+    /// Instrumentation scope: the library that produced the span, versioned. Absent on rows written
+    /// before the scope was captured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<i64>,
+    /// Span-level finish reasons, exactly as the provider reported them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub finish_reasons: Vec<String>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cost_input: f64,
+    pub cost_output: f64,
+    pub cost_total: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception_stacktrace: Option<String>,
+}
+
+impl SpanEnvelopeDto {
+    pub fn from_row(row: &crate::data::types::MessageSpanRow) -> Self {
+        Self {
+            trace_id: row.trace_id.clone(),
+            span_id: row.span_id.clone(),
+            span_name: row.span_name.clone(),
+            start_time: row.span_timestamp,
+            end_time: row.span_end_timestamp,
+            model: row.model.clone(),
+            response_model: row.response_model.clone(),
+            response_id: row.response_id.clone(),
+            provider: row.provider.clone(),
+            framework: row.framework.clone(),
+            scope_name: row.scope_name.clone(),
+            scope_version: row.scope_version.clone(),
+            temperature: row.temperature,
+            top_p: row.top_p,
+            max_tokens: row.max_tokens,
+            // Stored as a rendered list; parsed back so the DTO carries the values, not the encoding.
+            finish_reasons: row
+                .finish_reasons
+                .as_deref()
+                .map(parse_stored_string_list)
+                .unwrap_or_default(),
+            input_tokens: row.input_tokens,
+            output_tokens: row.output_tokens,
+            total_tokens: row.total_tokens,
+            cache_read_tokens: row.cache_read_tokens,
+            cache_write_tokens: row.cache_write_tokens,
+            reasoning_tokens: row.reasoning_tokens,
+            cost_input: row.cost_input,
+            cost_output: row.cost_output,
+            cost_total: row.cost_total,
+            status_code: row.status_code.clone(),
+            exception_type: row.exception_type.clone(),
+            exception_message: row.exception_message.clone(),
+            exception_stacktrace: row.exception_stacktrace.clone(),
+        }
+    }
+}
+
+/// Parse a stored string list - JSON (`["stop"]`) or DuckDB's list rendering (`[stop]`) - into its
+/// values. Both dialects render the same column differently, and the DTO must not leak the encoding.
+fn parse_stored_string_list(raw: &str) -> Vec<String> {
+    if let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(raw) {
+        return items
+            .into_iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+    }
+    raw.trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|s| s.trim().trim_matches('\'').trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 // --- Project Stats DTOs ---
@@ -499,6 +621,8 @@ pub struct FeedMessagesResponse {
     pub tool_definitions: Vec<serde_json::Value>,
     /// Deduplicated tool names
     pub tool_names: Vec<String>,
+    /// One envelope per span on this page - the page's own spans, the same scope the totals use.
+    pub envelopes: Vec<SpanEnvelopeDto>,
 }
 
 /// Feed spans response with cursor-based pagination

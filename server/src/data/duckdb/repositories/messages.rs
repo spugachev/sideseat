@@ -40,7 +40,22 @@ const MESSAGE_SELECT_COLUMNS: &str = r#"
     tool_names,
     observation_type,
     session_id,
-    EPOCH_US(ingested_at) AS ingested_at_us"#;
+    EPOCH_US(ingested_at) AS ingested_at_us,
+    scope_name,
+    scope_version,
+    span_name,
+    framework,
+    gen_ai_response_model AS response_model,
+    gen_ai_response_id AS response_id,
+    gen_ai_temperature AS temperature,
+    gen_ai_top_p AS top_p,
+    gen_ai_max_tokens AS max_tokens,
+    gen_ai_finish_reasons AS finish_reasons,
+    gen_ai_usage_cache_read_tokens AS cache_read_tokens,
+    gen_ai_usage_cache_write_tokens AS cache_write_tokens,
+    gen_ai_usage_reasoning_tokens AS reasoning_tokens,
+    gen_ai_cost_input::DOUBLE AS cost_input,
+    gen_ai_cost_output::DOUBLE AS cost_output"#;
 
 // ============================================================================
 // Query functions - return raw unfiltered data
@@ -276,6 +291,21 @@ fn parse_span_row(row: &duckdb::Row) -> Result<MessageSpanRow, duckdb::Error> {
         observation_type: row.get(18)?,
         session_id: row.get(19)?,
         ingested_at: micros_to_datetime(row.get::<_, i64>(20)?),
+        scope_name: row.get(21)?,
+        scope_version: row.get(22)?,
+        span_name: row.get(23)?,
+        framework: row.get(24)?,
+        response_model: row.get(25)?,
+        response_id: row.get(26)?,
+        temperature: row.get(27)?,
+        top_p: row.get(28)?,
+        max_tokens: row.get(29)?,
+        finish_reasons: row.get(30)?,
+        cache_read_tokens: row.get(31)?,
+        cache_write_tokens: row.get(32)?,
+        reasoning_tokens: row.get(33)?,
+        cost_input: row.get(34)?,
+        cost_output: row.get(35)?,
     })
 }
 
@@ -316,6 +346,61 @@ mod tests {
             messages: Some(messages_json.to_string()),
             ..Default::default()
         }
+    }
+
+    /// The scope and the envelope facts survive the round trip: written by the positional appender,
+    /// read back by the message projection. This is the write-and-read pair the schema-v2 columns
+    /// exist for, and it is the test that fails if a projection and the appender ever disagree about
+    /// a column's position - the failure mode of a positional writer.
+    #[tokio::test]
+    async fn scope_and_envelope_facts_survive_the_round_trip() {
+        let (_temp_dir, analytics) = create_test_service().await;
+        let project_id = "test-project";
+
+        let mut span = make_span_with_messages(
+            project_id,
+            "trace-env",
+            "span-env",
+            r#"[{"role": "user", "content": "Hello"}]"#,
+        );
+        span.scope_name = Some("opentelemetry.instrumentation.langchain".to_string());
+        span.scope_version = Some("0.3.1".to_string());
+        span.gen_ai_response_model = Some("model-x-20260101".to_string());
+        span.gen_ai_response_id = Some("resp_abc".to_string());
+        span.gen_ai_temperature = Some(0.7);
+        span.gen_ai_max_tokens = Some(1024);
+        span.gen_ai_usage_cache_read_tokens = 17;
+        span.gen_ai_cost_input = 0.001;
+        span.gen_ai_cost_output = 0.002;
+
+        {
+            let conn = analytics.conn();
+            insert_batch(&conn, &[span]).expect("insert");
+        }
+
+        let conn = analytics.conn();
+        let params = FeedMessagesParams {
+            project_id: project_id.to_string(),
+            limit: 10,
+            ..Default::default()
+        };
+        let result = get_project_messages(&conn, &params).expect("query");
+        assert_eq!(result.rows.len(), 1);
+        let row = &result.rows[0];
+        assert_eq!(
+            row.scope_name.as_deref(),
+            Some("opentelemetry.instrumentation.langchain"),
+            "the instrumentation scope must survive the round trip - it is what makes a rule keyed \
+             on a producer's identity-and-version expressible at read time"
+        );
+        assert_eq!(row.scope_version.as_deref(), Some("0.3.1"));
+        assert_eq!(row.response_model.as_deref(), Some("model-x-20260101"));
+        assert_eq!(row.response_id.as_deref(), Some("resp_abc"));
+        assert_eq!(row.temperature, Some(0.7));
+        assert_eq!(row.max_tokens, Some(1024));
+        assert_eq!(row.cache_read_tokens, 17);
+        assert!((row.cost_input - 0.001).abs() < 1e-9);
+        assert!((row.cost_output - 0.002).abs() < 1e-9);
     }
 
     #[tokio::test]

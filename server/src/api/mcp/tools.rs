@@ -12,6 +12,7 @@ use crate::api::routes::otel::messages::{build_messages_response, scope_feed_to_
 use crate::api::routes::otel::sessions::session_row_to_summary;
 use crate::api::routes::otel::stats::stats_result_to_dto;
 use crate::api::routes::otel::traces::{MAX_SPANS_PER_TRACE, trace_row_to_summary};
+use crate::api::routes::otel::types::SpanEnvelopeDto;
 use crate::api::routes::otel::types::{
     SessionSummaryDto, SpanDetailDto, SpanSummaryDto, TraceDetailDto, TraceSummaryDto,
 };
@@ -186,6 +187,8 @@ impl McpServer {
                 ..Default::default()
             };
             let result = repo.get_messages(&params).await.map_err(mcp_err)?;
+            let envelopes: Vec<SpanEnvelopeDto> =
+                result.rows.iter().map(SpanEnvelopeDto::from_row).collect();
             let processed = process_spans(result.rows, &options);
             // A session's totals come from the session, as the HTTP endpoint takes them: the
             // pipeline only ever saw rows carrying messages, tools or an error, so a span billed
@@ -200,7 +203,11 @@ impl McpServer {
                     .map(|s| (s.total_tokens, s.total_cost)),
                 _ => None,
             };
-            return ok_json(&build_messages_response(processed, session_totals));
+            return ok_json(&build_messages_response(
+                processed,
+                session_totals,
+                envelopes,
+            ));
         }
 
         // Trace path: session-aware loading for cross-trace dedup
@@ -232,6 +239,14 @@ impl McpServer {
         let scoped_tools = session_id.map(|_| {
             extract_tools_from_rows(result.rows.iter().filter(|r| r.trace_id == trace_id))
         });
+        // Envelope scope follows the view: the query loads the whole session so cross-trace
+        // stripping can run, and the caller asked about one trace.
+        let envelopes: Vec<SpanEnvelopeDto> = result
+            .rows
+            .iter()
+            .filter(|r| r.trace_id == trace_id)
+            .map(SpanEnvelopeDto::from_row)
+            .collect();
 
         let mut processed = process_spans(result.rows, &options);
 
@@ -240,7 +255,7 @@ impl McpServer {
         }
 
         let trace_totals = trace.map(|t| (t.total_tokens, t.total_cost));
-        ok_json(&build_messages_response(processed, trace_totals))
+        ok_json(&build_messages_response(processed, trace_totals, envelopes))
     }
 
     #[tool(

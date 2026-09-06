@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use super::OtelApiState;
-use super::types::{BlockDto, MessagesMetadataDto, MessagesResponseDto};
+use super::types::{BlockDto, MessagesMetadataDto, MessagesResponseDto, SpanEnvelopeDto};
 use crate::api::auth::{SessionRead, SpanRead, TraceRead};
 use crate::api::types::{ApiError, parse_timestamp_param};
 use crate::data::types::MessageQueryParams;
@@ -93,10 +93,12 @@ pub async fn get_span_messages(
     }
 
     // Process through feed pipeline
+    let envelopes: Vec<SpanEnvelopeDto> =
+        result.rows.iter().map(SpanEnvelopeDto::from_row).collect();
     let processed = process_spans_cached(&state.reconstruction, result.rows, &options);
     let processed = apply_time_window(processed, from_timestamp, to_timestamp);
 
-    let response = build_messages_response(processed, None);
+    let response = build_messages_response(processed, None, envelopes);
     Ok(Json(response))
 }
 
@@ -172,6 +174,15 @@ pub async fn get_trace_messages(
 
     // When session-loaded, scope tool extraction to the target trace's rows
     // BEFORE consuming rows into process_spans (which needs ownership).
+    // Envelope scope follows the *view*, not the query: a trace view loads its whole session so
+    // cross-trace stripping can run, and returning every session span's envelope here would leak
+    // spans the caller did not ask about.
+    let envelopes: Vec<SpanEnvelopeDto> = result
+        .rows
+        .iter()
+        .filter(|row| row.trace_id == *trace_id)
+        .map(SpanEnvelopeDto::from_row)
+        .collect();
     let scoped_tools = if session_id.is_some() {
         Some(extract_tools_from_rows(
             result.rows.iter().filter(|r| r.trace_id == *trace_id),
@@ -195,7 +206,7 @@ pub async fn get_trace_messages(
 
     // Use trace-level totals for metadata (matches trace endpoint)
     let trace_totals = Some((trace.total_tokens, trace.total_cost));
-    let response = build_messages_response(processed, trace_totals);
+    let response = build_messages_response(processed, trace_totals, envelopes);
     Ok(Json(response))
 }
 
@@ -261,10 +272,12 @@ pub async fn get_session_messages(
         .map_err(ApiError::from_data)?;
 
     // Process through feed pipeline
+    let envelopes: Vec<SpanEnvelopeDto> =
+        result.rows.iter().map(SpanEnvelopeDto::from_row).collect();
     let processed = process_spans_cached(&state.reconstruction, result.rows, &options);
     let processed = apply_time_window(processed, from_timestamp, to_timestamp);
 
-    let response = build_messages_response(processed, session_totals);
+    let response = build_messages_response(processed, session_totals, envelopes);
     Ok(Json(response))
 }
 
@@ -293,6 +306,7 @@ pub(crate) fn scope_feed_to_trace(
 pub(crate) fn build_messages_response(
     processed: FeedResult,
     trace_totals: Option<(i64, f64)>,
+    envelopes: Vec<SpanEnvelopeDto>,
 ) -> MessagesResponseDto {
     let mut messages_dto = Vec::new();
     let mut start_time: Option<DateTime<Utc>> = None;
@@ -321,6 +335,7 @@ pub(crate) fn build_messages_response(
     ));
 
     MessagesResponseDto {
+        envelopes,
         messages: messages_dto,
         metadata: MessagesMetadataDto {
             total_messages,

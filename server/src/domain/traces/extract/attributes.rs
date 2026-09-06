@@ -198,6 +198,15 @@ pub struct SpanData {
     pub span_category: Option<SpanCategory>,
     pub observation_type: Option<ObservationType>,
     pub framework: Option<Framework>,
+    /// The instrumentation scope that produced this span - `ScopeSpans.scope.name`/`.version`.
+    ///
+    /// The one fact about a span nothing else derives: the resource names the *process*, the span
+    /// attributes name the call, and only the scope names the **library** that emitted the telemetry,
+    /// versioned. It was never captured for spans (the metrics path always had it), which meant no
+    /// rule could ever be keyed on a producer's identity-and-version - the design record's stage 3
+    /// calls that the fact that makes an undeclared producer decidable.
+    pub scope_name: Option<String>,
+    pub scope_version: Option<String>,
     pub status_code: Option<String>,
     pub status_message: Option<String>,
     pub exception_type: Option<String>,

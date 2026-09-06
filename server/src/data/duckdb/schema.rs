@@ -6,7 +6,7 @@
 //! use an inline DEDUP_SPANS subquery.
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Complete schema SQL
 pub const SCHEMA: &str = r#"
@@ -175,6 +175,12 @@ CREATE TABLE IF NOT EXISTS otel_spans (
     -- Stored as JSON for direct querying; includes attributes and resource.attributes
     -- ═══════════════════════════════════════════════════════════════════
     raw_span                    JSON,
+
+    -- Instrumentation scope (v2). Declared last, deliberately: the span writer is a positional
+    -- Appender and a migration can only append, so fresh and upgraded databases must agree on the
+    -- physical order - the invariant `migration_added_columns_are_declared_last` pins.
+    scope_name                  VARCHAR,
+    scope_version               VARCHAR,
 );
 
 -- Indexes for spans (minimal - DuckDB columnar scans are efficient for low-cardinality filters)

@@ -53,6 +53,21 @@ fn make_span_row(
         observation_type: None,
         session_id: None,
         ingested_at: ts,
+        scope_name: None,
+        scope_version: None,
+        span_name: None,
+        framework: None,
+        response_model: None,
+        response_id: None,
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        finish_reasons: None,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        cost_input: 0.0,
+        cost_output: 0.0,
     }
 }
 
@@ -109,6 +124,21 @@ fn make_span_row_full(
         observation_type: observation_type.map(String::from),
         session_id: None,
         ingested_at: span_start,
+        scope_name: None,
+        scope_version: None,
+        span_name: None,
+        framework: None,
+        response_model: None,
+        response_id: None,
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        finish_reasons: None,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        cost_input: 0.0,
+        cost_output: 0.0,
     }
 }
 

@@ -120,6 +120,9 @@ fn insert_spans(conn: &Connection, spans: &[NormalizedSpan]) -> Result<(), Duckd
             span.tool_names.as_deref().unwrap_or("[]"),
             // Pre-serialized raw span JSON
             span.raw_span.as_deref(),
+            // Instrumentation scope (v4) - appended last, matching the schema's physical order
+            span.scope_name.as_deref(),
+            span.scope_version.as_deref(),
         ])?;
     }
 

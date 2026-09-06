@@ -168,6 +168,13 @@ fn digest_with(rows: &[MessageSpanRow], session_of_trace: &HashMap<String, Strin
             row.exception_message.as_deref(),
             row.exception_stacktrace.as_deref(),
             row.observation_type.as_deref(),
+            row.scope_name.as_deref(),
+            row.scope_version.as_deref(),
+            row.span_name.as_deref(),
+            row.framework.as_deref(),
+            row.response_model.as_deref(),
+            row.response_id.as_deref(),
+            row.finish_reasons.as_deref(),
         ] {
             match field {
                 // Length-prefixed, so `("ab", "c")` and `("a", "bc")` are different inputs.
@@ -197,6 +204,18 @@ fn digest_with(rows: &[MessageSpanRow], session_of_trace: &HashMap<String, Strin
         hasher.update(&row.output_tokens.to_le_bytes());
         hasher.update(&row.total_tokens.to_le_bytes());
         hasher.update(&row.cost_total.to_le_bytes());
+        // The envelope scalars. They do not change reconstruction itself, but they change the
+        // *response* - a corrected temperature or a re-priced cost split must not be served from a
+        // stale entry under an unchanged key, which is exactly the widening rule the design record
+        // states: a field that affects the answer must reach the digest.
+        hasher.update(&row.temperature.unwrap_or(f64::MIN).to_le_bytes());
+        hasher.update(&row.top_p.unwrap_or(f64::MIN).to_le_bytes());
+        hasher.update(&row.max_tokens.unwrap_or(i64::MIN).to_le_bytes());
+        hasher.update(&row.cache_read_tokens.to_le_bytes());
+        hasher.update(&row.cache_write_tokens.to_le_bytes());
+        hasher.update(&row.reasoning_tokens.to_le_bytes());
+        hasher.update(&row.cost_input.to_le_bytes());
+        hasher.update(&row.cost_output.to_le_bytes());
     }
     *hasher.finalize().as_bytes()
 }
@@ -230,6 +249,21 @@ mod tests {
             observation_type: Some("generation".to_string()),
             session_id: None,
             ingested_at: t,
+            scope_name: None,
+            scope_version: None,
+            span_name: None,
+            framework: None,
+            response_model: None,
+            response_id: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            finish_reasons: None,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            cost_input: 0.0,
+            cost_output: 0.0,
         }
     }
 

@@ -333,9 +333,25 @@ pub(super) fn extract_attributes_batch(request: &ExportTraceServiceRequest) -> V
             .unwrap_or_default();
 
         for scope_spans in &resource_spans.scope_spans {
+            // The scope is per ScopeSpans group, read once: empty strings are absences, the same
+            // filtering the metrics path applies.
+            let (scope_name, scope_version) = scope_spans
+                .scope
+                .as_ref()
+                .map(|scope| {
+                    (
+                        Some(scope.name.clone()).filter(|s| !s.is_empty()),
+                        Some(scope.version.clone()).filter(|s| !s.is_empty()),
+                    )
+                })
+                .unwrap_or((None, None));
             for otlp_span in &scope_spans.spans {
                 let span_attrs = extract_attributes(&otlp_span.attributes);
-                let mut span = SpanData::default();
+                let mut span = SpanData {
+                    scope_name: scope_name.clone(),
+                    scope_version: scope_version.clone(),
+                    ..SpanData::default()
+                };
 
                 // Core OTLP fields
                 attributes::set_core_fields(&mut span, otlp_span);

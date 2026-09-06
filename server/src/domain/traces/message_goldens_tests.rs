@@ -3254,6 +3254,21 @@ fn bench_session_scaling() {
             observation_type: Some("generation".to_string()),
             session_id: Some("session-1".to_string()),
             ingested_at: t,
+            scope_name: None,
+            scope_version: None,
+            span_name: None,
+            framework: None,
+            response_model: None,
+            response_id: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            finish_reasons: None,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            cost_input: 0.0,
+            cost_output: 0.0,
         }
     }
 

@@ -892,6 +892,8 @@ struct ChSpanRow {
     output_preview: Option<String>,
     raw_span: Option<String>,
     ingested_at_us: i64,
+    scope_name: Option<String>,
+    scope_version: Option<String>,
 }
 
 impl From<ChSpanRow> for SpanRow {
@@ -936,6 +938,8 @@ impl From<ChSpanRow> for SpanRow {
             input_preview: row.input_preview,
             output_preview: row.output_preview,
             raw_span: row.raw_span,
+            scope_name: row.scope_name,
+            scope_version: row.scope_version,
             ingested_at: DateTime::from_timestamp_micros(row.ingested_at_us)
                 .unwrap_or(DateTime::UNIX_EPOCH),
         }
@@ -1304,7 +1308,8 @@ pub async fn get_spans_for_trace(
             input_preview,
             output_preview,
             raw_span,
-            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us
+            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us,
+            scope_name, scope_version
         FROM otel_spans FINAL
         WHERE project_id = ? AND trace_id = ?
         ORDER BY timestamp_start
@@ -1371,7 +1376,8 @@ pub async fn get_span(
             input_preview,
             output_preview,
             raw_span,
-            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us
+            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us,
+            scope_name, scope_version
         FROM otel_spans FINAL
         WHERE project_id = ? AND trace_id = ? AND span_id = ?
         LIMIT 1
@@ -1529,7 +1535,8 @@ pub async fn list_spans(
             input_preview,
             output_preview,
             raw_span,
-            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us
+            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us,
+            scope_name, scope_version
         FROM otel_spans FINAL
         WHERE {}
         ORDER BY {}
@@ -1631,7 +1638,8 @@ pub async fn get_feed_spans(
             input_preview,
             output_preview,
             raw_span,
-            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us
+            toInt64(toUnixTimestamp64Micro(ingested_at)) as ingested_at_us,
+            scope_name, scope_version
         FROM {source}
         WHERE {}
         ORDER BY ingested_at DESC, span_id DESC, trace_id DESC

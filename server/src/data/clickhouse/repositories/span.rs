@@ -91,6 +91,8 @@ struct SpanRow {
     tool_definitions: String,
     tool_names: String,
     raw_span: Option<String>,
+    scope_name: Option<String>,
+    scope_version: Option<String>,
 }
 
 impl From<&NormalizedSpan> for SpanRow {
@@ -198,6 +200,8 @@ impl From<&NormalizedSpan> for SpanRow {
                 .unwrap_or_else(|| "[]".to_string()),
             tool_names: span.tool_names.clone().unwrap_or_else(|| "[]".to_string()),
             raw_span: span.raw_span.clone(),
+            scope_name: span.scope_name.clone(),
+            scope_version: span.scope_version.clone(),
         }
     }
 }

@@ -118,6 +118,21 @@ fn row(trace_seq: u32, span_seq: u32, offset: i64, messages_json: String) -> Mes
         observation_type: None,
         session_id: None,
         ingested_at: start,
+        scope_name: None,
+        scope_version: None,
+        span_name: None,
+        framework: None,
+        response_model: None,
+        response_id: None,
+        temperature: None,
+        top_p: None,
+        max_tokens: None,
+        finish_reasons: None,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        cost_input: 0.0,
+        cost_output: 0.0,
     }
 }
 

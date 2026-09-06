@@ -270,6 +270,8 @@ fn fixture_spans() -> Vec<NormalizedSpan> {
         // because the event and link reads extract from that JSON and would otherwise compare two
         // empty lists.
         NormalizedSpan {
+            scope_name: Some("opentelemetry.instrumentation.test".to_string()),
+            scope_version: Some("1.2.3".to_string()),
             raw_span: Some(
                 serde_json::json!({
                     "attributes": {"custom.attribute": "value"},
@@ -412,7 +414,7 @@ fn describe_span(s: &SpanRow) -> String {
          resource_attributes={:?} session={:?} user={:?} system={:?} request_model={:?} \
          agent_name={:?} finish_reasons={:?} tokens=[{},{},{},{},{},{}] \
          costs=[{},{},{},{},{},{}] usage_details={:?} metadata={:?} attributes={:?} \
-         input={:?} output={:?} raw_span={:?}",
+         input={:?} output={:?} raw_span={:?} scope_name={:?} scope_version={:?}",
         s.span_id,
         s.trace_id,
         s.parent_span_id,
@@ -451,6 +453,8 @@ fn describe_span(s: &SpanRow) -> String {
         s.input_preview,
         s.output_preview,
         s.raw_span.as_deref().map(canonical_json),
+        s.scope_name,
+        s.scope_version,
     )
     // ingested_at is deliberately absent: it defaults to the server clock at write time, so the
     // two backends record different values for the same span by design.
@@ -462,7 +466,9 @@ fn describe_message_row(r: &MessageSpanRow) -> String {
     format!(
         "span={} trace={} parent={:?} start={} end={:?} model={:?} provider={:?} status={:?} \
          exception={:?}/{:?}/{:?} tokens=[{},{},{}] cost={} observation={:?} session={:?} \
-         messages={} tools={} tool_names={}",
+         messages={} tools={} tool_names={} scope={:?}/{:?} span_name={:?} framework={:?} \
+         response={:?}/{:?} params=[{:?},{:?},{:?}] finish={:?} \
+         usage=[{},{},{}] cost_split=[{},{}]",
         r.span_id,
         r.trace_id,
         r.parent_span_id,
@@ -483,6 +489,21 @@ fn describe_message_row(r: &MessageSpanRow) -> String {
         r.messages_json,
         r.tool_definitions_json,
         r.tool_names_json,
+        r.scope_name,
+        r.scope_version,
+        r.span_name,
+        r.framework,
+        r.response_model,
+        r.response_id,
+        r.temperature,
+        r.top_p,
+        r.max_tokens,
+        r.finish_reasons,
+        r.cache_read_tokens,
+        r.cache_write_tokens,
+        r.reasoning_tokens,
+        f(r.cost_input),
+        f(r.cost_output),
     )
 }
 

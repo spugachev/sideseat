@@ -91,6 +91,21 @@ pub(crate) fn normalize_for_test_with_mode(
                 observation_type: s.observation_type.map(|o| o.as_str().to_string()),
                 session_id: s.session_id.clone(),
                 ingested_at: s.timestamp_start,
+                scope_name: None,
+                scope_version: None,
+                span_name: None,
+                framework: None,
+                response_model: None,
+                response_id: None,
+                temperature: None,
+                top_p: None,
+                max_tokens: None,
+                finish_reasons: None,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                reasoning_tokens: 0,
+                cost_input: 0.0,
+                cost_output: 0.0,
             };
             (s.span_name.clone(), row)
         })

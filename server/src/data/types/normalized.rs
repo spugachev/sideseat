@@ -142,6 +142,11 @@ pub struct NormalizedSpan {
     pub span_category: Option<SpanCategory>,
     pub observation_type: Option<ObservationType>,
     pub framework: Option<Framework>,
+    /// Instrumentation scope, the same pair `NormalizedMetric` has always carried: the library that
+    /// produced the span, versioned. Declared *last* in both analytics schemas (a migration can only
+    /// append), which is why they sit apart from the classification block they belong to logically.
+    pub scope_name: Option<String>,
+    pub scope_version: Option<String>,
     pub status_code: Option<String>,
     pub status_message: Option<String>,
     pub exception_type: Option<String>,

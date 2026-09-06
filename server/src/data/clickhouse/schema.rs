@@ -14,7 +14,7 @@
 use crate::core::config::ClickhouseConfig;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// The oldest schema version this build can migrate *from*.
 ///
@@ -56,27 +56,10 @@ pub struct Migration {
     pub distributed_statements: &'static [&'static str],
 }
 
-/// One entry, for v3. The ClickHouse backend was introduced at v2, so there is nothing to migrate from v1;
-/// the `datapoint_id` sorting-key widening that briefly lived here as a v3 migration is part of the initial
-/// schema instead - see `domain::metrics::identity` for what it is and `otel_metrics_*_table` for where it
-/// sits in the key.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 3,
-    name: "all_metric_exemplars",
-    // `ADD COLUMN IF NOT EXISTS` is idempotent on its own, so there is nothing a precondition would add.
-    precondition: None,
-    statements: &[
-        "ALTER TABLE otel_metrics{local} {on_cluster} ADD COLUMN IF NOT EXISTS \
-         exemplars Nullable(String) CODEC(ZSTD(3))",
-    ],
-    // A `Distributed` table is created `AS otel_metrics_local`, which copies the structure once and does
-    // not follow later changes - so without this the front end has no such column and every insert naming
-    // it fails.
-    distributed_statements: &[
-        "ALTER TABLE otel_metrics {on_cluster} ADD COLUMN IF NOT EXISTS \
-         exemplars Nullable(String) CODEC(ZSTD(3))",
-    ],
-}];
+/// Empty: the ClickHouse backend was introduced at v2 and nothing above it was ever deployed, so the
+/// initial DDL carries everything - the exemplars column and the span instrumentation scope included.
+/// The runner and its coverage tests stay, because the first real migration is one entry away.
+pub const MIGRATIONS: &[Migration] = &[];
 
 /// Validate and return a cluster name safe for SQL interpolation.
 ///
@@ -246,6 +229,10 @@ CREATE TABLE IF NOT EXISTS otel_spans_local ON CLUSTER {cluster} (
     -- RAW SPAN (compressed)
     raw_span                    Nullable(String) CODEC(ZSTD(3)),
 
+    -- Instrumentation scope: the library that produced the span, versioned
+    scope_name                  Nullable(String) CODEC(ZSTD(1)),
+    scope_version               Nullable(String) CODEC(ZSTD(1)),
+
     -- INDICES for fast lookups
     INDEX idx_trace_id trace_id TYPE bloom_filter GRANULARITY 1,
     INDEX idx_session_id session_id TYPE bloom_filter GRANULARITY 1,
@@ -395,6 +382,10 @@ CREATE TABLE IF NOT EXISTS otel_spans (
 
     -- RAW SPAN (compressed)
     raw_span                    Nullable(String) CODEC(ZSTD(3)),
+
+    -- Instrumentation scope: the library that produced the span, versioned
+    scope_name                  Nullable(String) CODEC(ZSTD(1)),
+    scope_version               Nullable(String) CODEC(ZSTD(1)),
 
     -- INDICES for fast lookups
     INDEX idx_trace_id trace_id TYPE bloom_filter GRANULARITY 1,

@@ -309,12 +309,21 @@ pub async fn get_feed_messages(
             },
             tool_definitions: Vec::new(),
             tool_names: Vec::new(),
+            envelopes: Vec::new(),
         }));
     }
 
     let page_spans: HashSet<(String, String)> = spans
         .iter()
         .map(|s| (s.trace_id.clone(), s.span_id.clone()))
+        .collect();
+    // Envelopes for the page's own spans, before the context load widens the row set - the same
+    // scope the totals use, and for the same reason: the pipeline sees more than the page shows.
+    let mut envelope_seen: HashSet<(&str, &str)> = HashSet::new();
+    let envelopes: Vec<super::types::SpanEnvelopeDto> = spans
+        .iter()
+        .filter(|row| envelope_seen.insert((row.trace_id.as_str(), row.span_id.as_str())))
+        .map(super::types::SpanEnvelopeDto::from_row)
         .collect();
     // Totals from the page's own rows, before the context load widens the row set. Counted once per
     // span: a re-ingested span is two rows on DuckDB, which reads the raw table, and one on
@@ -476,6 +485,7 @@ pub async fn get_feed_messages(
         metadata,
         tool_definitions,
         tool_names,
+        envelopes,
     }))
 }
 
@@ -736,6 +746,21 @@ mod tests {
             observation_type: Some("generation".to_string()),
             session_id: None,
             ingested_at: t,
+            scope_name: None,
+            scope_version: None,
+            span_name: None,
+            framework: None,
+            response_model: None,
+            response_id: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            finish_reasons: None,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reasoning_tokens: 0,
+            cost_input: 0.0,
+            cost_output: 0.0,
         }
     }
 

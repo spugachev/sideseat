@@ -206,6 +206,29 @@ pub struct MessageSpanRow {
     pub session_id: Option<String>,
     /// Ingestion time for cursor-based pagination in feed API
     pub ingested_at: DateTime<Utc>,
+    /// Instrumentation scope: the library that produced the span, versioned. What makes a rule keyed
+    /// on a producer's identity-and-version expressible at read time - the fact the design record's
+    /// persistence audit found was never captured for spans. `None` on pre-v4 rows.
+    pub scope_name: Option<String>,
+    pub scope_version: Option<String>,
+    /// The compact envelope: the facts a debugging caller needs beside the messages, loaded in the
+    /// same query because a second span-sized request doubles the measured p50 and introduces a
+    /// snapshot-consistency problem between the two reads. One envelope per span in the response,
+    /// never repeated per block.
+    pub span_name: Option<String>,
+    pub framework: Option<String>,
+    pub response_model: Option<String>,
+    pub response_id: Option<String>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_tokens: Option<i64>,
+    /// Span-level finish reasons, as stored (a JSON array rendered to text).
+    pub finish_reasons: Option<String>,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cost_input: f64,
+    pub cost_output: f64,
 }
 
 impl SpanIdentity for MessageSpanRow {

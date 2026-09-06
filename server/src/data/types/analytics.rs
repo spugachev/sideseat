@@ -86,6 +86,10 @@ pub struct SpanRow {
     pub output_preview: Option<String>,
     pub raw_span: Option<String>,
     pub ingested_at: DateTime<Utc>,
+    /// Instrumentation scope: the library that produced the span, versioned. `None` on rows written
+    /// before schema v4, which genuinely did not record it.
+    pub scope_name: Option<String>,
+    pub scope_version: Option<String>,
 }
 
 /// Span counts (events and links) for bulk operations
