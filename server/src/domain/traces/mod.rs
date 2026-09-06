@@ -115,3 +115,7 @@ pub(crate) fn normalize_for_test_with_mode(
 #[cfg(test)]
 #[path = "message_goldens_tests.rs"]
 mod message_goldens_tests;
+#[cfg(test)]
+pub(crate) mod source_program;
+#[cfg(test)]
+mod source_program_tests;

@@ -40,11 +40,13 @@ unsuccessful search for its required evidence, not a preference for the existing
   identity, measured; producer scope remains a correctness input for private dialects and is still
   not persisted, so the boundary is exactly where review 6 drew it.
 
-**Open, with mechanisms named**: the `SourceProgram` truth generator and mutation suite; persistence
-of instrumentation scope and carrier provenance (approved, unstarted); the versioned read envelope and
-generated client contract; caller-visible ordering-degradation reporting; the quadratic
-overlapping-dataflow case; and the TLA+ model, which covers three of six constraint classes and must
-say so in its header rather than be extended piecemeal.
+**Open, with mechanisms named** (three of the original five landed after the series closed —
+`8478e234` persisted the scope and shipped the read envelope, and `source_program.rs` is the truth
+generator's first working form, with four truth-driven tests that discriminate `emit + emit` from
+`emit + restate`, a distinction no golden can make): caller-visible ordering-degradation reporting;
+the quadratic overlapping-dataflow case; the generated client contract; extending the truth generator
+to more producers and to the parallel-branch case; and the TLA+ model, which covers three of six
+constraint classes and must say so in its header rather than be extended piecemeal.
 
 **For the next engineer**: the highest-value first moves are the scope/provenance persistence (step 4
 of the plan — everything scope-aware waits on it) and the compact read envelope (step 5 — three facts
@@ -66,8 +68,8 @@ different levels of authorisation and nothing else says which is which.
 | **Resolver authority** — one order, the feed projects it | **landed** (`ce864be6`) | maintain | — | `the_feed_projects_the_resolved_order_without_resorting_it` |
 | **SCC condensation and a degradation signal** | warn landed; **and the corpus measured**: the claim "no fixture cycles" was false — `adk/tool_use` and `_synthetic/repeated_tool_result_parts` have always contradicted themselves, invisibly, because the golden tests install no tracing subscriber. Both produce byte-correct output (the deterministic release lands on the legacy order). `ordering_contradictions_are_pinned` now holds the set bidirectionally | maintain | — | a new cycling fixture fails the ratchet |
 | **The request-scoped framing edge** | **landed** for the mechanism it covers: 16 of 22 fixtures (both Claude SDK suites), whose frame and turn meet on one generation span. LangGraph (fragmented array carriers) and `strands/swarm` (frame and turn on different spans, no request link) are different mechanisms and stay in the ratchet | maintain | — | the gap list holds the two open mechanisms bidirectionally |
-| **Instrumentation scope + carrier provenance persistence** | **approved** | build | — | a scope-keyed rule becomes expressible |
-| **Compact read envelope, stage 0R** | **approved** | build | — | the three already-loaded facts become reachable |
+| **Instrumentation scope persistence** | **landed** (`8478e234`) | maintain | — | `scope_and_envelope_facts_survive_the_round_trip`; carrier provenance already persists via `MessageSource`, and raw payloads stay a reference into `raw_span` per the data-class rule |
+| **Compact read envelope, stage 0R** | **landed** (`8478e234`): every message endpoint returns one envelope per span in scope, same query, never per block | maintain | — | the three facts are reachable; the cache digests every new field |
 | **Data classes and the `framework_config` rule** | **approved** | build | provenance | the sentinel-token test |
 | **Stage 8 / v2 output contract** | **separate project** | schema and read work | scope decision | v2 goldens |
 | **Profile language, global occurrence assembler, reconciliation rebuild** | **rejected** | none | — | the gate was tested and not met |
